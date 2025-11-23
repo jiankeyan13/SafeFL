@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 from registry import dataset_builders
+import numpy as np
 
 class DatasetStore(Dataset):
     def __init__(self, name, split, dataset):
@@ -11,6 +12,22 @@ class DatasetStore(Dataset):
         return len(self.dataset)
     def __getitem__(self, index):
         return self.dataset[index]
+    
+    def get_label(self, index):
+        """
+        统一获取所有样本标签的方法。
+        返回: numpy array of shape (N,)
+        """
+        if hasattr(self.dataset, 'targets'):
+            return np.array(self.dataset.targets)
+        if hasattr(self.dataset, 'labels'):
+            return np.array(self.dataset.labels)
+        print(f"{self.name} has no labels/targets, Iterating to load labels (slow)...")
+        labels = []
+        for i in range(len(self.dataset)):
+            labels.append(self.dataset[i][1])
+        return np.array(labels)
+
 
 def build_dataset(name: str, root:str, is_train: bool):
     return dataset_builders[name](root, is_train)

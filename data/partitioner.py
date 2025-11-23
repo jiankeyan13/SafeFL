@@ -37,6 +37,57 @@ class IIDPartitioner(Partitioner):
             taskset.add_task(task)
         return taskset
 
+class Dirichlet_Partitioner(Partitioner):
+    def __init__(self, alpha: float=1.0, seed: int=42):
+        self.alpha = alpha
+        self.seed = seed
+    
+    def partition(self, store: DatasetStore, num_clients: int, split: str="train")->TaskSet:
+        n_samples = len(store)
+        labels = store.get_label()
+        num_classes = len(np.unqiue(labels))
+
+        rng = np.random.default_rng(self.seed)
+        clinet_indices = []
+
+        min_size = 0
+        while min_size < num_classes:# 防止客户端数据量过低->num_classes可以考虑替换为batch_size
+            client_indices = [[] for _ in range(num_clients)]
+
+            for k in range(num_classes):
+                idk_k = np.where(labels == k)[0]
+                rng.shuffle(idk_k)
+
+                #处理每个客户端的样本数
+                proporation = rng.dirichlet(np.repeat(self.alpha, num_clients))
+                proporation = np.array(p * (len(idx_j)<n_samples/num_clients)\
+                                       for idx_j, p in zip(client_indices, proporation))
+                proporation = proporation / proporation.sum()
+
+                split_points = (np.cumsum(proporation)*len(idk_k)).astype(int)[:-1]
+                split_batch = np.split(idk_k, split_points)
+                for i in range(num_clients):
+                    client_indices[i].append(split_batch[i].tolist())
+
+            min_size = min([len(client_indices[i]) for i in range(num_clients)])
+        
+        taskset = TaskSet()
+        for i, client_indice in enumerate(client_indices):
+            rng.shuffle(client_indice)#标签因for有序放置
+            task = Task(
+                owner_id=f"client_{i}",
+                dataset_tag=store.name,
+                split=split,
+                indices=client_indice
+            )
+            taskset.add_task(task)
+        return taskset
+
+"""
+class Balanced_DirichletP(Partitioner):
+class Pathological_Partitioner(Partitioner):
+"""
+
 if __name__ == '__main__':
     class TestData:
         def __init__(self):
