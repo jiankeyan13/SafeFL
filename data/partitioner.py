@@ -45,10 +45,10 @@ class Dirichlet_Partitioner(Partitioner):
     def partition(self, store: DatasetStore, num_clients: int, split: str="train")->TaskSet:
         n_samples = len(store)
         labels = store.get_label()
-        num_classes = len(np.unqiue(labels))
+        num_classes = len(np.unique(labels))
 
         rng = np.random.default_rng(self.seed)
-        clinet_indices = []
+        client_indices = []
 
         min_size = 0
         while min_size < num_classes:# 防止客户端数据量过低->num_classes可以考虑替换为batch_size
@@ -59,18 +59,20 @@ class Dirichlet_Partitioner(Partitioner):
                 rng.shuffle(idk_k)
 
                 #处理每个客户端的样本数
-                proporation = rng.dirichlet(np.repeat(self.alpha, num_clients))
-                proporation = np.array(p * (len(idx_j)<n_samples/num_clients)\
-                                       for idx_j, p in zip(client_indices, proporation))
-                proporation = proporation / proporation.sum()
+                proportion = rng.dirichlet(np.repeat(self.alpha, num_clients))
+                proportion = np.array([p * (len(idx_j)<n_samples/num_clients)\
+                                       for idx_j, p in zip(client_indices, proportion)])
+                proportion = proportion / proportion.sum()
 
-                split_points = (np.cumsum(proporation)*len(idk_k)).astype(int)[:-1]
+                split_points = (np.cumsum(proportion)*len(idk_k)).astype(int)[:-1]
                 split_batch = np.split(idk_k, split_points)
                 for i in range(num_clients):
-                    client_indices[i].append(split_batch[i].tolist())
+                    client_indices[i].extend(split_batch[i].tolist())
 
-            min_size = min([len(client_indices[i]) for i in range(num_clients)])
-        
+            # min_size = min([len(client_indices[i]) for i in range(num_clients)])
+            # 优化：使用生成器表达式
+            min_size = min(len(c_idx) for c_idx in client_indices)
+
         taskset = TaskSet()
         for i, client_indice in enumerate(client_indices):
             rng.shuffle(client_indice)#标签因for有序放置
@@ -95,7 +97,7 @@ if __name__ == '__main__':
         def __len__(self):
             return 100
     testdata = TestData()
-    iid_partitioner = IIDPartitioner()
+    iid_partitioner = Partitioner()
     taskset = iid_partitioner.partition(testdata, 3)
 
     t0 = taskset.get_task("client_0", "train")

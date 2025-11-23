@@ -13,7 +13,7 @@ class DatasetStore(Dataset):
     def __getitem__(self, index):
         return self.dataset[index]
     
-    def get_label(self, index):
+    def get_label(self):
         """
         统一获取所有样本标签的方法。
         返回: numpy array of shape (N,)
