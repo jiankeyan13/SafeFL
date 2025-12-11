@@ -74,23 +74,6 @@ class StandardTrainer:
     def _get_optimizer(self):
         # ... 封装优化器创建逻辑 ...
         return torch.optim.SGD(self.model.parameters(), 
-                               lr=self.config.get('lr', 0.03), 
+                               lr=self.config.get('lr', 0.01), 
                                momentum=0.9, 
                                weight_decay=5e-4)
-
-    def _get_scheduler(self, optimizer, steps_per_epoch):
-        # ... 封装 Warmup + Cosine 逻辑 ...
-        if not self.config.get('use_scheduler', False):
-            return None
-            
-        epochs = self.config.get('epochs', 1)
-        total_steps = epochs * steps_per_epoch
-        warmup_steps = int(self.config.get('warmup_ratio', 0.05) * total_steps)
-        
-        # 1. Warmup Scheduler
-        warmup = LinearLR(optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_steps)
-        # 2. Cosine Scheduler
-        main_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps)
-        
-        # 3. 串联
-        return SequentialLR(optimizer, schedulers=[warmup, main_scheduler], milestones=[warmup_steps])

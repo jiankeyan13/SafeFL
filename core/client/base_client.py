@@ -28,7 +28,7 @@ class BaseClient:
         self.device = device
         # 延迟实例化：调用工厂函数创建本地模型
         self.model = model_fn().to(self.device)
-        self.num_samples = 0
+        self.num_train_samples = 0
 
     def execute(self, 
                 global_state_dict: Dict[str, torch.Tensor],
@@ -153,7 +153,7 @@ class BaseClient:
             "num_samples": self.num_train_samples, # 真实样本数
         }
 
-    def evaluate(self, 
+    def eval(self, 
                  global_state_dict: Dict[str, torch.Tensor],
                  task: Task,
                  dataset_store: DatasetStore,
@@ -164,7 +164,6 @@ class BaseClient:
         通用评估函数。支持 Metric 注入。
         """
 
-        self.receive_model(global_state_dict)
         self.model.eval()
         
         loader = self.data_load(task, dataset_store, config, attack_profile, mode='test')
