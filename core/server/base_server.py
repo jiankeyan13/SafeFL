@@ -108,18 +108,20 @@ class BaseServer:
         # 输入：聚合结果 + 当前模型 -> 输出：原地修改模型
         self.updater.update(self.global_model, aggregated_weights)
 
-    def eval_global(self, metrics: List[Callable]) -> Dict[str, float]:
+    def eval(self, metrics: List[Callable], dataloader=None) -> Dict[str, float]:
         """
         在服务器持有的测试集上评估全局模型。
         """
         self.global_model.eval()
         device = self.device
         
+        loader_to_use = dataloader if dataloader is not None else self.test_loader
+
         all_preds = []
         all_targets = []
         
         with torch.no_grad():
-            for data, target in self.test_loader:
+            for data, target in loader_to_use:
                 data, target = data.to(device), target.to(device)
                 output = self.global_model(data)
                 

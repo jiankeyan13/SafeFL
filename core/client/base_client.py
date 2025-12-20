@@ -90,16 +90,17 @@ class BaseClient:
             self.num_train_samples = len(local_dataset)
 
         # [Hook] 攻击者修改数据集
-        if attack_profile is not None and hasattr(attack_profile, 'modify_dataset'):
-            local_dataset = attack_profile.modify_dataset(local_dataset, mode=mode)
-
+        if attack_profile is not None and hasattr(attack_profile, 'poison_dataset'):
+            local_dataset = attack_profile.poison_dataset(local_dataset, mode=mode)
+        num_workers = config.get('num_workers', 0)
         shuffle = (mode == 'train')
         loader = DataLoader(
             local_dataset,
             batch_size=config.get('batch_size', 32),
             shuffle=shuffle,
-            num_workers=config.get('num_workers', 0),
-            pin_memory=True
+            num_workers=num_workers,
+            pin_memory=True,
+            persistent_workers=(num_workers > 0)
         )
         return loader
 

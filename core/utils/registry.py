@@ -70,3 +70,5 @@ ATTACK_REGISTRY = Registry("Attacks")
 ALGORITHM_REGISTRY = Registry("Algorithms")
 
 METRIC_REGISTRY = Registry("Metrics")
+
+ATTACK_REGISTRY = Registry("Attacks")
