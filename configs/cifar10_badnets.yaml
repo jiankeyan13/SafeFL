@@ -59,7 +59,7 @@ server:
 training:
   rounds: 100
   clients_fraction: 0.4   # 每轮参与者比例
-  attackers_frac: 0.5      # 选中者里坏人比例
+  attackers_frac: 0.25      # 选中者里坏人比例
   
   eval_interval: 10
   scheduler: "cosine"
@@ -69,7 +69,7 @@ training:
 
 # --- 客户端本地训练配置 ---
 client:
-  epochs: 3
+  epochs: 2
   batch_size: 32
   momentum: 0.9
   weight_decay: 0.0005

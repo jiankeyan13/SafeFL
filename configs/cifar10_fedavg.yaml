@@ -1,6 +1,6 @@
 # --- 实验元数据 ---
 project: "FL-Test"
-name: "cifar10_avg_test1_4speed"
+name: "cifar10_avg_test1_4090"
 seed: 2025
 device: "cuda:6"
 use_wandb: true
@@ -9,7 +9,7 @@ use_wandb: true
 data:
   dataset: "cifar10"
   root: "./data_source"
-  num_clients: 10
+  num_clients: 50
   val_ratio: 0.1
   partitioner:
     name: "dirichlet"
@@ -36,8 +36,6 @@ server:
 # --- 训练流程配置 ---
 training:
   rounds: 100
-  # 【修改点】将 clients_per_round 改为 clients_fraction
-  # 50 个客户端 * 0.2 = 每轮选 10 个
   clients_fraction: 0.2
   eval_interval: 10
   
