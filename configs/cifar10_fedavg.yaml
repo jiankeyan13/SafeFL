@@ -1,6 +1,6 @@
 # --- 实验元数据 ---
 project: "FL-Test"
-name: "cifar10_fedavg"
+name: "fedavg"
 seed: 2025
 device: "cuda:6"
 use_wandb: true
@@ -9,7 +9,7 @@ use_wandb: true
 data:
   dataset: "cifar10"
   root: "./data_source"
-  num_clients: 50
+  num_clients: 20
   val_ratio: 0.1
   partitioner:
     name: "dirichlet"
@@ -35,8 +35,8 @@ server:
 
 # --- 训练流程配置 ---
 training:
-  rounds: 100
-  clients_fraction: 0.2
+  rounds: 30
+  clients_fraction: 0.5
   eval_interval: 10
   
   scheduler: "cosine"

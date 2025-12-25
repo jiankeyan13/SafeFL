@@ -1,4 +1,5 @@
 from torch.utils.data import Dataset
+import torch
 from data.registry import dataset_builders
 import numpy as np
 
@@ -18,6 +19,20 @@ class DatasetStore(Dataset):
         统一获取所有样本标签的方法。
         返回: numpy array of shape (N,)
         """
+        # 针对 Subset 优化：直接读取父数据集标签并切片，避免遍历
+        if isinstance(self.dataset, torch.utils.data.Subset):
+            if hasattr(self.dataset.dataset, 'targets'):
+                full_targets = self.dataset.dataset.targets
+            elif hasattr(self.dataset.dataset, 'labels'):
+                full_targets = self.dataset.dataset.labels
+            else:
+                full_targets = None
+            
+            if full_targets is not None:
+                if not isinstance(full_targets, np.ndarray):
+                    full_targets = np.array(full_targets)
+                return full_targets[self.dataset.indices]
+
         if hasattr(self.dataset, 'targets'):
             targets = self.dataset.targets
             if isinstance(targets, np.ndarray):

@@ -46,7 +46,7 @@ class BaseClient:
             config: 训练配置
             attack_profile: 攻击插件
         """
-        self.receive_model(global_state_dict)
+        self.receive_model(global_state_dict, task, dataset_store, config)
         
         # 保存初始权重，供某些攻击（如 Scaling Attack）计算 Delta 使用
         # 注意：这里存的是 CPU 上的副本，不占显存
@@ -67,12 +67,34 @@ class BaseClient:
         
         return payload
 
-    def receive_model(self, state_dict: Dict[str, torch.Tensor]):
+    def receive_model(self, 
+                      state_dict: Dict[str, torch.Tensor], 
+                      task: Optional[Task] = None, 
+                      dataset_store: Optional[DatasetStore] = None, 
+                      config: Optional[Dict[str, Any]] = None):
         """
         接收并加载模型权重。
+        如果提供了 task, dataset_store, config，则进行 BN 校准。
         """
         self.model.load_state_dict(state_dict, strict=True)
         self.model.to(self.device)
+
+        if task and dataset_store and config:
+            self.calibrate_bn(task, dataset_store, config)
+
+    def calibrate_bn(self, task: Task, dataset_store: DatasetStore, config: Dict[str, Any]):
+        """
+        使用本地数据校准 Batch Normalization 层的统计量。
+        """
+        # 使用 clean data (attack_profile=None) 和 train 模式
+        calib_loader = self.data_load(task, dataset_store, config, attack_profile=None, mode='train')
+        self.model.train() 
+        with torch.no_grad():
+            num_calib_batches = 5
+            for i, (data, _) in enumerate(calib_loader):
+                if i >= num_calib_batches:
+                    break
+                self.model(data.to(self.device))
 
     def data_load(self, 
                   task: Task, 
@@ -166,17 +188,8 @@ class BaseClient:
         """
 
         #客户端BN校准
-        self.receive_model(global_state_dict)
-        calib_loader = self.data_load(task, dataset_store, config, attack_profile=None, mode='train')
-        self.model.train() 
-        with torch.no_grad():
-            num_calib_batches = 5
-            for i, (data, _) in enumerate(calib_loader):
-                if i >= num_calib_batches:
-                    break
-                self.model(data.to(self.device))
-
-
+        self.receive_model(global_state_dict, task, dataset_store, config)
+        
         self.model.eval()
         
         loader = self.data_load(task, dataset_store, config, attack_profile, mode='test')

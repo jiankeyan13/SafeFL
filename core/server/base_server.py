@@ -87,12 +87,10 @@ class BaseServer:
         
         return package
 
-    def step(self, updates: List[Dict[str, Any]]):
+    def step(self, updates: List[Dict[str, Any]], proxy_loader: Optional[DataLoader] = None):
         """
         [核心防御流水线] 处理客户端上传的更新。
-        
-        Args:
-            updates: 列表，每个元素是 {'client_id': str, 'weights': dict, 'num_samples': int, ...}
+        proxy_loader: 如果提供，将用于BN校准
         """
 
         # 输入：原始更新列表 -> 输出：清洗后的更新列表 (可能变短)
@@ -106,7 +104,7 @@ class BaseServer:
         aggregated_weights = self.aggregator.aggregate(updates=client_weights, weights=num_samples)
 
         # 输入：聚合结果 + 当前模型 -> 输出：原地修改模型
-        self.updater.update(self.global_model, aggregated_weights)
+        self.updater.update(self.global_model, aggregated_weights, calibration_loader=proxy_loader, device=self.device)
 
     def eval(self, metrics: List[Callable], dataloader=None) -> Dict[str, float]:
         """

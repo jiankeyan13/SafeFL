@@ -53,13 +53,32 @@ class TaskGenerator:
         self._load_sources()
 
         # 2. 调用划分器 (使用 Plain 版本进行划分，因为 Partitioner 只看标签，不看 Transform)
-        #    注意：这里得到的是每个客户端的"全量索引"
-        #    使用 train_plain 或 train_aug 都可以，因为它们长度和标签完全一致
         full_train_store = self.stores[f"{self.dataset_name}_train_plain"]
         
+        # === 核心修改：提取Server Proxy数据 (每类10条) ===
+        labels = full_train_store.get_label()
+        unique_classes = np.unique(labels)
+        proxy_per_class = 10
+        
+        proxy_indices = []
+        for c in unique_classes:
+            c_indices = np.where(labels == c)[0]
+            selected = self.rng.choice(c_indices, proxy_per_class, replace=False)
+            proxy_indices.extend(selected)
+        
+        proxy_indices = np.array(proxy_indices)
+        all_indices_arr = np.arange(len(full_train_store))
+        # 剩余用于FL训练的数据索引
+        remaining_indices = np.setdiff1d(all_indices_arr, proxy_indices)
+        
+        # 构造临时 Store 传给划分器
+        from torch.utils.data import Subset
+        remaining_subset = Subset(full_train_store.dataset, remaining_indices)
+        remaining_store = DatasetStore("temp_remaining", "train", remaining_subset)
+
         # split_name 暂时叫 'temp_all'，因为马上要被拆掉
         partition_result: TaskSet = self.partitioner.partition(
-            full_train_store, 
+            remaining_store, 
             self.num_clients, 
             split="temp_all"
         )
@@ -71,9 +90,10 @@ class TaskGenerator:
         for client_id in range(self.num_clients):
             owner = f"client_{client_id}"
             
-            # 从 partition 结果中取出该客户端的所有索引
+            # 从 partition 结果中取出该客户端的所有索引 (相对索引 -> 绝对索引)
             temp_task = partition_result.get_task(owner, "temp_all")
-            all_indices = np.array(temp_task.indices)
+            relative_indices = np.array(temp_task.indices)
+            all_indices = remaining_indices[relative_indices]
             
             # 打乱并切分
             self.rng.shuffle(all_indices)
@@ -113,6 +133,15 @@ class TaskGenerator:
                 indices=list(range(len(test_store))) # 全量
             )
             final_task_set.add_task(global_test_task)
+            
+        # 3.3 注册 Server Proxy 任务
+        proxy_task = Task(
+            owner_id="server",
+            dataset_tag=f"{self.dataset_name}_train_plain", # 用无增强源
+            split="proxy",
+            indices=proxy_indices.tolist()
+        )
+        final_task_set.add_task(proxy_task)
 
         print("--- 任务生成完毕 ---")
         return final_task_set, self.stores

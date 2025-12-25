@@ -98,9 +98,29 @@ class FederatedRunner:
         self.model_fn = partial(model_cls, **model_conf.get('params', {}))
         self.global_model = self.model_fn().to(self.device)
 
+        # --- 提取 Server 任务 ---
         self.server_test_task = self.task_set.get_task("server", "test_global")
         self.server_dataset_store = self.dataset_stores[self.server_test_task.dataset_tag]
 
+        # 构造 Server Proxy Loader (用于BN校准)
+        # 通过 TaskSet 获取我们之前注入的 'proxy' 任务
+        if self.task_set.get_task("server", "proxy"):
+            proxy_task = self.task_set.get_task("server", "proxy")
+            proxy_store = self.dataset_stores[proxy_task.dataset_tag]
+            
+            # 使用临时的工具人Client复用data_load逻辑，或者直接创建DataLoader
+            # 为了简单和最小改动，我们借用一个临时Client来创建loader，确保配置一致性
+            temp_client = BaseClient("server_proxy_loader", self.device, self.model_fn)
+            self.server_proxy_loader = temp_client.data_load(
+                task=proxy_task,
+                dataset_store=proxy_store,
+                config=self.config['client'], # 复用 client 配置 (batch_size等)
+                mode='train' # train模式可能有shuffle
+            )
+            del temp_client
+        else:
+            self.server_proxy_loader = None
+        
         algo_conf = self.config['algorithm'] # e.g. {'name': 'fedavg', 'params': {...}}
         self.server, self.client_class = ALGORITHM_REGISTRY.build(
             algo_conf['name'],
@@ -151,8 +171,8 @@ class FederatedRunner:
 
             updates = self._run_local_training(selected_ids, client_models, round_config)
 
-            # Server Step
-            self.server.step(updates)
+            # Server Step (传入Proxy Loader进行可能的BN校准)
+            self.server.step(updates, proxy_loader=self.server_proxy_loader)
             train_metrics = self.server.aggregate_metrics(updates)
             self.logger.log_metrics(train_metrics, step=round_idx)
 
