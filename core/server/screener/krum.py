@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict
 
 from core.utils.registry import SCREENER_REGISTRY
 from .base_screener import BaseScreener
@@ -18,54 +18,64 @@ class KrumScreener(BaseScreener):
         self.f = f
         self.m = m
 
-    def screen(self, updates: List[Dict[str, Any]], global_model=None) -> List[Dict[str, Any]]:
+    def screen(self, 
+               client_deltas: List[Dict[str, torch.Tensor]], 
+               num_samples: List[float],
+               global_model: torch.nn.Module = None) -> List[float]:
         """
-        执行 Multi-Krum 筛选。
-        updates: [{'client_id':..., 'weights':..., 'num_samples':...}, ...]
+        执行 Multi-Krum 筛选，返回筛选分数。
+        只使用可学习参数计算距离，忽略 BN 统计量。
         """
-        n = len(updates)
+        n = len(client_deltas)
         
-        # 边界检查：如果客户端太少，Krum 跑不起来
-        # Krum 要求 n >= 2f + 3 (理论上)
+        # 边界检查
         if n <= 2 * self.f + 2:
-            # 可以在这里打印 warning 或者动态调整 f
-            pass
+            # 如果客户端数量不足，返回全 1.0（不筛选）
+            return [1.0] * n
 
-        # 1. 展平参数 (Flatten Weights)
-        # 为了算欧氏距离，必须把 state_dict 变成一个大向量
+        # 1. 获取可学习参数的名称集合
+        if global_model is not None:
+            learnable_params = set([name for name, param in global_model.named_parameters() if param.requires_grad])
+        else:
+            # 如果没有提供 global_model，假设所有参数都是可学习的
+            learnable_params = set(client_deltas[0].keys())
+
+        # 2. 展平可学习参数 (Flatten Learnable Parameters Only)
         vectors = []
-        for up in updates:
-            # 将所有 tensor 拼成一个一维向量
-            flat = torch.cat([p.view(-1) for p in up['weights'].values()])
+        for delta_dict in client_deltas:
+            # 只拼接可学习参数，忽略 BN 统计量
+            flat_params = []
+            for name, tensor in delta_dict.items():
+                if name in learnable_params:
+                    flat_params.append(tensor.view(-1))
+            
+            if len(flat_params) > 0:
+                flat = torch.cat(flat_params)
+            else:
+                # 如果没有可学习参数，创建一个空向量
+                flat = torch.tensor([])
             vectors.append(flat)
         
         # 堆叠成矩阵 [n, d]
         vec_stack = torch.stack(vectors)
         
-        # 2. 计算两两距离矩阵 (Pairwise Distance)
-        # dists[i, j] = ||v_i - v_j||^2
+        # 3. 计算两两距离矩阵 (Pairwise Distance)
         dists = torch.cdist(vec_stack, vec_stack, p=2)
         
-        # 3. 计算 Krum Score
-        # 对于每个 i，选最近的 n - f - 2 个邻居求和
+        # 4. 计算 Krum Score
         k = n - self.f - 2
-        if k <= 0: k = 1 # 容错
+        if k <= 0: k = 1
         
-        scores = []
+        krum_scores = []
         for i in range(n):
-            # 拿到第 i 行的所有距离，从小到大排序
-            # [1:] 是为了排除自己 (距离为0)
             sorted_dists, _ = torch.sort(dists[i])
-            # 取最近的 k 个求和
             score = torch.sum(sorted_dists[1 : k+1])
-            scores.append(score.item())
+            krum_scores.append(score.item())
             
-        # 4. 选择 Score 最小的 m 个索引
-        # argsort 返回从小到大的索引
-        sorted_indices = np.argsort(scores)
-        selected_indices = sorted_indices[:self.m]
+        # 5. 选择 Score 最小的 m 个索引
+        sorted_indices = np.argsort(krum_scores)
+        selected_indices = set(sorted_indices[:self.m].tolist())
         
-        # 5. 返回筛选后的 updates
-        clean_updates = [updates[i] for i in selected_indices]
-        
-        return clean_updates
+        # 6. 返回筛选分数：被选中的为 1.0，未被选中的为 0.0
+        screen_scores = [1.0 if i in selected_indices else 0.0 for i in range(n)]     
+        return screen_scores

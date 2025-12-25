@@ -1,8 +1,8 @@
 # --- 实验元数据 ---
 project: "FL-Test"
-name: "cifar10_badnets_krum"
+name: "krum"
 seed: 2025
-device: "cuda:0"
+device: "cuda:6"
 use_wandb: true
 
 # --- 数据配置 ---
@@ -13,7 +13,7 @@ data:
   val_ratio: 0.1
   partitioner:
     name: "dirichlet"
-    alpha: 0.9
+    alpha: 1.0
 
 # --- 模型配置 ---
 model:
@@ -60,9 +60,9 @@ server:
 
 # --- 训练流程配置 ---
 training:
-  rounds: 100
+  rounds: 30
   clients_fraction: 0.5   # 每轮参与者比例
-  # attackers_frac: 0.25      # 选中者里坏人比例
+  attackers_frac: 0.2      # 选中者里坏人比例
   
   eval_interval: 10
   scheduler: "cosine"
@@ -72,7 +72,7 @@ training:
 
 # --- 客户端本地训练配置 ---
 client:
-  epochs: 2
+  epochs: 1
   batch_size: 32
   momentum: 0.9
   weight_decay: 0.0005
