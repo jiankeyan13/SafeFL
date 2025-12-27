@@ -5,7 +5,7 @@ import hdbscan
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.func import functional_call, vmap
+from torch.func import functional_call
 
 from core.utils.registry import SCREENER_REGISTRY
 from .base_screener import BaseScreener
@@ -45,10 +45,15 @@ class DeepSightScreener(BaseScreener):
             # 缺少模型无法执行 DDif，默认全保留
             return [1.0] * num_clients, context
 
-        device = next(global_model.parameters()).device if any(global_model.parameters()) else torch.device("cpu")
+        # 安全获取模型所在设备，避免对 Tensor 做布尔判断
+        params_iter = iter(global_model.parameters())
+        first_param = next(params_iter, None)
+        device = first_param.device if first_param is not None else torch.device("cpu")
 
-        # ResNet18/50 输出层固定为 fc
-        last_weight_name, last_bias_name = "fc.weight", "fc.bias"
+        # 定位输出层（兼容 fc / linear 命名）
+        last_weight_name, last_bias_name = self._resolve_output_layer(global_model)
+        if last_weight_name is None:
+            return [1.0] * num_clients, context
 
         num_classes = self._infer_num_classes(global_model, last_weight_name, last_bias_name)
         # 输入形状：优先 context/模型属性，否则按类别数硬编码 CIFAR vs Tiny-ImageNet
@@ -178,14 +183,15 @@ class DeepSightScreener(BaseScreener):
                 with torch.inference_mode():
                     prob_output_global = self._to_prob(global_model(inputs))
 
-                def _per_client(params, buffers):
-                    logits_local = functional_call(global_model, (params, buffers), (inputs,))
-                    prob_output_local = self._to_prob(logits_local)
-                    ratio = torch.div(prob_output_local, prob_output_global + self.epsilon)
-                    return ratio.sum(dim=0)
-
-                batch_ddif = vmap(_per_client, in_dims=(0, 0))(stacked_params, stacked_buffers)
-                seed_ddif.add_(batch_ddif)
+                # 顺序遍历客户端，避免 vmap 带来的高峰值显存
+                with torch.inference_mode():
+                    for idx in range(len(client_deltas)):
+                        params_i = {k: v[idx] for k, v in stacked_params.items()}
+                        buffers_i = {k: v[idx] for k, v in stacked_buffers.items()}
+                        logits_local = functional_call(global_model, (params_i, buffers_i), (inputs,))
+                        prob_output_local = self._to_prob(logits_local)
+                        ratio = torch.div(prob_output_local, prob_output_global + self.epsilon)
+                        seed_ddif[idx].add_(ratio.sum(dim=0))
 
             seed_ddif /= self.num_samples
             ddifs.append(seed_ddif)
@@ -240,7 +246,13 @@ class DeepSightScreener(BaseScreener):
         state = global_model.state_dict()
         if bias_name in state:
             return state[bias_name].shape[0]
-        return state[weight_name].shape[0]
+        if weight_name in state:
+            return state[weight_name].shape[0]
+        # 兜底：找到最后一个 weight 形状
+        for key in reversed(list(state.keys())):
+            if key.endswith("weight"):
+                return state[key].shape[0]
+        return 1
 
     def _infer_input_shape(self, global_model: torch.nn.Module,
                            context: Dict[str, Any], num_classes: int) -> Tuple[int, ...]:
@@ -265,6 +277,21 @@ class DeepSightScreener(BaseScreener):
     def _to_prob(self, outputs: torch.Tensor) -> torch.Tensor:
         return F.softmax(outputs, dim=-1)
 
+    def _resolve_output_layer(self, global_model: torch.nn.Module) -> Tuple[str, str]:
+        state_keys = list(global_model.state_dict().keys())
+        if "fc.weight" in state_keys and "fc.bias" in state_keys:
+            return "fc.weight", "fc.bias"
+        if "linear.weight" in state_keys and "linear.bias" in state_keys:
+            return "linear.weight", "linear.bias"
+        # 兜底：取最后出现的 weight/bias 配对
+        for key in reversed(state_keys):
+            if key.endswith("weight"):
+                prefix = key[: -len("weight")]
+                bias_key = prefix + "bias"
+                if bias_key in state_keys:
+                    return key, bias_key
+        return None, None
+
     def _get_noise_batches(self, device: torch.device, input_shape: Tuple[int, ...],
                            num_samples: int, batch_size: int, seed: int):
         key = (str(device), input_shape, num_samples, batch_size, seed)
@@ -272,7 +299,7 @@ class DeepSightScreener(BaseScreener):
             return self._noise_cache[key]
 
         remaining = num_samples
-        num_batches = 10
+        num_batches = 20  # 拆成 20 份，减小单批显存占用
         batch_cap = max(1, math.ceil(num_samples / num_batches))
         noise_batches = []
 
