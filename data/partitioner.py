@@ -1,5 +1,6 @@
 import numpy as np
 from abc import ABC, abstractmethod
+from data.constants import client_owner
 from data.task import Task, TaskSet
 from data.dataset_store import DatasetStore
 from typing import List, Dict
@@ -27,9 +28,9 @@ class IIDPartitioner(Partitioner):
         
         #获取索引,封装成Task，添加到TaskSet中
         splits = np.array_split(indices, num_clients)
-        for i,  client_indice in enumerate(splits):
+        for i, client_indice in enumerate(splits):
             task = Task(
-                owner_id=f"client_{i}",
+                owner_id=client_owner(i),
                 dataset_tag=store.name,
                 split=split,
                 indices=client_indice.tolist() # 转成纯 Python list 方便序列化
@@ -38,72 +39,65 @@ class IIDPartitioner(Partitioner):
         return taskset
 
 class DirichletPartitioner(Partitioner):
-    def __init__(self, alpha: float=1.0, seed: int=42):
+    def __init__(self, alpha: float = 1.0, seed: int = 42, max_retries: int = 100):
         self.alpha = alpha
         self.seed = seed
-    
-    def partition(self, store: DatasetStore, num_clients: int, split: str="train")->TaskSet:
+        self.max_retries = max_retries
+
+    def partition(self, store: DatasetStore, num_clients: int, split: str = "train") -> TaskSet:
         n_samples = len(store)
         labels = store.get_label()
-        num_classes = len(np.unique(labels))
+        unique_labels = np.unique(labels)
+        num_classes = len(unique_labels)
+
+        if num_clients <= 0:
+            raise ValueError("num_clients must be positive")
+        if self.alpha <= 0:
+            raise ValueError("alpha must be positive")
+        if n_samples < num_clients:
+            raise ValueError(f"n_samples ({n_samples}) < num_clients ({num_clients})")
 
         rng = np.random.default_rng(self.seed)
-        client_indices = []
+        min_threshold = min(num_classes, 1)
+        client_indices: List[List[int]] = []
+        attempt = 0
 
-        min_size = 0
-        while min_size < num_classes:# 防止客户端数据量过低->num_classes可以考虑替换为batch_size
+        while attempt < self.max_retries:
             client_indices = [[] for _ in range(num_clients)]
-
-            for k in range(num_classes):
-                idk_k = np.where(labels == k)[0]
-                rng.shuffle(idk_k)
-
-                #处理每个客户端的样本数
+            for label_val in unique_labels:
+                idk = np.where(labels == label_val)[0]
+                rng.shuffle(idk)
                 proportion = rng.dirichlet(np.repeat(self.alpha, num_clients))
-                proportion = np.array([p * (len(idx_j)<n_samples/num_clients)\
-                                       for idx_j, p in zip(client_indices, proportion)])
+                proportion = np.array([
+                    p * (len(idx_j) < n_samples / num_clients)
+                    for idx_j, p in zip(client_indices, proportion)
+                ])
                 proportion = proportion / proportion.sum()
-
-                split_points = (np.cumsum(proportion)*len(idk_k)).astype(int)[:-1]
-                split_batch = np.split(idk_k, split_points)
+                split_points = (np.cumsum(proportion) * len(idk)).astype(int)[:-1]
+                split_batch = np.split(idk, split_points)
                 for i in range(num_clients):
                     client_indices[i].extend(split_batch[i].tolist())
 
-            # min_size = min([len(client_indices[i]) for i in range(num_clients)])
-            # 优化：使用生成器表达式
             min_size = min(len(c_idx) for c_idx in client_indices)
+            if min_size >= min_threshold:
+                break
+            attempt += 1
+
+        if min_size < min_threshold:
+            raise RuntimeError(
+                f"DirichletPartitioner failed to converge after {self.max_retries} retries. "
+                f"min_samples_per_client={min_size}, threshold={min_threshold}. "
+                "Try increasing alpha or reducing num_clients."
+            )
 
         taskset = TaskSet()
         for i, client_indice in enumerate(client_indices):
-            rng.shuffle(client_indice)#标签因for有序放置
+            rng.shuffle(client_indice)
             task = Task(
-                owner_id=f"client_{i}",
+                owner_id=client_owner(i),
                 dataset_tag=store.name,
                 split=split,
                 indices=client_indice
             )
             taskset.add_task(task)
         return taskset
-
-"""
-class Balanced_Dirichlet(Partitioner):
-class Pathological_Partitioner(Partitioner):
-"""
-
-if __name__ == '__main__':
-    class TestData:
-        def __init__(self):
-            self.name = "test"
-        def __len__(self):
-            return 100
-    testdata = TestData()
-    iid_partitioner = Partitioner()
-    taskset = iid_partitioner.partition(testdata, 3)
-
-    t0 = taskset.get_task("client_0", "train")
-    print(f"Client_0样本数:{len(t0.indices)}")
-    print(f"Client_0样本前5索引:{t0.indices[:5]}")
-
-
-
-    

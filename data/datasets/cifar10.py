@@ -1,57 +1,55 @@
-from data.registry import register_dataset
-from data.dataset_store import DatasetStore
-import torchvision.transforms as transforms
-from torchvision.datasets import CIFAR10
 import os
-from core.utils.mmap_dataset import MemoryMappedDataset #共享内存
+from torchvision.datasets import CIFAR10
+import torchvision.transforms as transforms
 
-base_transform = transforms.Compose([
+from core.utils.mmap_dataset import MemoryMappedDataset
+from data.dataset_store import DatasetStore
+from data.registry import register_dataset
+
+# CIFAR10 标准归一化参数，避免在 base/aug 中重复定义
+CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
+CIFAR10_STD = (0.2023, 0.1994, 0.2010)
+
+_base_transform = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize(CIFAR10_MEAN, CIFAR10_STD),
 ])
 
-aug_transform = transforms.Compose([
+_aug_transform = transforms.Compose([
     transforms.RandomCrop(32, padding=4),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    transforms.Normalize(CIFAR10_MEAN, CIFAR10_STD),
 ])
 
-def _build_cifar10_impl(root, is_train, use_aug):
 
+def _build_cifar10_impl(root: str, is_train: bool, use_aug: bool) -> DatasetStore:
     real_dataset = CIFAR10(root=root, train=is_train, download=True, transform=None)
-
     split_name = "train" if is_train else "test"
     cache_path = os.path.join(root, f"cifar10_{split_name}_mmap")
-
-    final_transform = aug_transform if (is_train and use_aug) else base_transform
-
-    # MemoryMappedDataset 会负责在第一次运行时创建 .npy 文件，后续直接 mmap 读取
-    mmap_dataset = MemoryMappedDataset(original_dataset=real_dataset, cache_path=cache_path, transform=final_transform)
-
-    if is_train:
-        split = "train" if use_aug else "train_plain"
-    else:
-        split = "test"
-        
+    final_transform = _aug_transform if (is_train and use_aug) else _base_transform
+    mmap_dataset = MemoryMappedDataset(
+        original_dataset=real_dataset,
+        cache_path=cache_path,
+        transform=final_transform,
+    )
+    split = "train" if use_aug else "train_plain" if is_train else "test"
     return DatasetStore("cifar10", split, mmap_dataset)
 
-# === 注册三个具体版本 ===
 
-# 1. 训练用（带增强） -> 'cifar10_train_aug'
-@register_dataset('cifar10_train_aug')
-def build_cifar10_aug(root, is_train):
-    # 强制 is_train=True, use_aug=True
+@register_dataset("cifar10_train_aug")
+def build_cifar10_aug(root: str, is_train: bool) -> DatasetStore:
+    del is_train  # 固定为 train+aug
     return _build_cifar10_impl(root, is_train=True, use_aug=True)
 
-# 2. 训练集切分出的验证/测试用（无增强） -> 'cifar10_train_plain'
-@register_dataset('cifar10_train_plain')
-def build_cifar10_train_plain(root, is_train):
-    # 强制 is_train=True, 但 use_aug=False
+
+@register_dataset("cifar10_train_plain")
+def build_cifar10_train_plain(root: str, is_train: bool) -> DatasetStore:
+    del is_train  # 固定为 train，无增强
     return _build_cifar10_impl(root, is_train=True, use_aug=False)
 
-# 3. 全局测试集（无增强） -> 'cifar10_test_plain'
-@register_dataset('cifar10_test_plain')
-def build_cifar10_test(root, is_train):
-    # 强制 is_train=False, use_aug=False
+
+@register_dataset("cifar10_test_plain")
+def build_cifar10_test(root: str, is_train: bool) -> DatasetStore:
+    del is_train  # 固定为 test
     return _build_cifar10_impl(root, is_train=False, use_aug=False)

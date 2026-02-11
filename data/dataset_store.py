@@ -1,61 +1,72 @@
-from torch.utils.data import Dataset
-import torch
-from data.registry import dataset_builders
+from typing import Optional
+import warnings
 import numpy as np
+import torch
+from torch.utils.data import Dataset
+
+from data.registry import dataset_builders
+
+
+def _extract_targets_from_dataset(ds) -> Optional[np.ndarray]:
+    """从底层 dataset 提取 targets/labels，不依赖 DatasetStore 内部结构。"""
+    if hasattr(ds, "targets"):
+        arr = ds.targets
+        return np.array(arr) if not isinstance(arr, np.ndarray) else arr
+    if hasattr(ds, "labels"):
+        return np.array(ds.labels)
+    return None
+
+
+def _extract_targets_from_subset(subset) -> Optional[np.ndarray]:
+    """从 Subset 的父数据集提取并切片。"""
+    parent = subset.dataset
+    full = _extract_targets_from_dataset(parent)
+    if full is not None:
+        idx = subset.indices
+        return full[idx] if hasattr(idx, "__getitem__") else full[np.asarray(idx)]
+    return None
+
 
 class DatasetStore(Dataset):
-    def __init__(self, name, split, dataset):
+    def __init__(self, name: str, split: str, dataset: Dataset):
         self.name = name
         self.split = split
         self.dataset = dataset
-    
-    def __len__(self):
+        self._label_cache: Optional[np.ndarray] = None
+
+    def __len__(self) -> int:
         return len(self.dataset)
-    def __getitem__(self, index):
+
+    def __getitem__(self, index: int):
         return self.dataset[index]
-    
-    def get_label(self):
+
+    def get_label(self) -> np.ndarray:
         """
-        统一获取所有样本标签的方法。
-        返回: numpy array of shape (N,)
+        统一获取所有样本标签。
+        返回: numpy array of shape (N,)。首次调用后结果会缓存。
         """
-        # 针对 Subset 优化：直接读取父数据集标签并切片，避免遍历
+        if self._label_cache is not None:
+            return self._label_cache
+
+        labels: Optional[np.ndarray] = None
         if isinstance(self.dataset, torch.utils.data.Subset):
-            if hasattr(self.dataset.dataset, 'targets'):
-                full_targets = self.dataset.dataset.targets
-            elif hasattr(self.dataset.dataset, 'labels'):
-                full_targets = self.dataset.dataset.labels
-            else:
-                full_targets = None
-            
-            if full_targets is not None:
-                if not isinstance(full_targets, np.ndarray):
-                    full_targets = np.array(full_targets)
-                return full_targets[self.dataset.indices]
+            labels = _extract_targets_from_subset(self.dataset)
 
-        if hasattr(self.dataset, 'targets'):
-            targets = self.dataset.targets
-            if isinstance(targets, np.ndarray):
-                return targets
-             # 如果是 list (torchvision 默认)，转 numpy
-            return np.array(targets)
-        if hasattr(self.dataset, 'labels'):
-            return np.array(self.dataset.labels)
-        print(f"{self.name} has no labels/targets, Iterating to load labels (slow)...")
-        labels = []
-        for i in range(len(self.dataset)):
-            labels.append(self.dataset[i][1])
-        return np.array(labels)
+        if labels is None:
+            labels = _extract_targets_from_dataset(self.dataset)
+
+        if labels is None:
+            warnings.warn(
+                f"DatasetStore '{self.name}' has no targets/labels. "
+                "Falling back to full iteration (slow).",
+                UserWarning,
+                stacklevel=2,
+            )
+            labels = np.array([self.dataset[i][1] for i in range(len(self.dataset))])
+
+        self._label_cache = labels
+        return labels
 
 
-def build_dataset(name: str, root:str, is_train: bool):
+def build_dataset(name: str, root: str, is_train: bool) -> DatasetStore:
     return dataset_builders[name](root, is_train)
-
-if __name__ == '__main__':
-    train_dataset = build_dataset('cifar10', 'data', True)
-    print(train_dataset.split)
-    print(len(train_dataset))
-    data = train_dataset[0]
-    # print(data[0],data[1])
-    test_dataset = build_dataset('cifar10', 'data', False)
-    print(len(test_dataset))

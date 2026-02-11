@@ -1,33 +1,36 @@
 from dataclasses import dataclass
+from typing import Optional
+
 
 @dataclass
 class Task:
-    owner_id:str
-    dataset_tag:str
-    split:str
-    indices:list[int]
+    owner_id: str
+    dataset_tag: str
+    split: str
+    indices: list[int]
+
 
 class TaskSet:
     def __init__(self):
-        self._tasks = {}
-    def add_task(self, task:Task):
-        id = task.owner_id
-        split = task.split
-        # 是否存在客户端
-        if id not in self._tasks:
-            self._tasks[id] = {}
-        self._tasks[id][split] = task
-    
-    def get_task(self, id:str, split:str)->Task:
-        #不存在时keyerror，符合预期
-        return self._tasks[id][split]
-    
-    def __str__(self):
-        return str(self._tasks)
+        self._tasks: dict[str, dict[str, Task]] = {}
 
-if __name__ == "__main__":
-    ts = TaskSet()
-    ts.add_task(Task("client_1", "cifar10", "train", [1,2,3]))
-    ts.add_task(Task("client_1", "cifar10", "test", [1,2,3]))
-    print(ts)
-    print(ts.get_task("client_1", "train"))
+    def add_task(self, task: Task) -> None:
+        oid = task.owner_id
+        split = task.split
+        if oid not in self._tasks:
+            self._tasks[oid] = {}
+        self._tasks[oid][split] = task
+
+    def get_task(self, oid: str, split: str) -> Task:
+        return self._tasks[oid][split]
+
+    def has_task(self, oid: str, split: str) -> bool:
+        return oid in self._tasks and split in self._tasks[oid]
+
+    def try_get_task(self, oid: str, split: str) -> Optional[Task]:
+        if self.has_task(oid, split):
+            return self._tasks[oid][split]
+        return None
+
+    def __str__(self) -> str:
+        return str(self._tasks)
