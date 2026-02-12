@@ -46,6 +46,21 @@ class TestTaskSet(unittest.TestCase):
         self.assertEqual(ts.get_task("client_0", "train").indices, [1, 2])
         self.assertEqual(ts.get_task("client_0", "test").indices, [3])
 
+    def test_list_client_ids_exclude_server(self):
+        ts = TaskSet()
+        ts.add_task(Task("client_0", "tag", "train", [1]))
+        ts.add_task(Task("client_1", "tag", "train", [2]))
+        ts.add_task(Task("server", "tag", "proxy", [3]))
+        ids = ts.list_client_ids(exclude_server=True)
+        self.assertEqual(sorted(ids), ["client_0", "client_1"])
+
+    def test_list_client_ids_include_server(self):
+        ts = TaskSet()
+        ts.add_task(Task("client_0", "tag", "train", [1]))
+        ts.add_task(Task("server", "tag", "proxy", [2]))
+        ids = ts.list_client_ids(exclude_server=False)
+        self.assertEqual(sorted(ids), ["client_0", "server"])
+
 
 class TestPartitioner(unittest.TestCase):
     """Partitioner 行为与可复现性。"""

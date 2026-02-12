@@ -17,20 +17,29 @@ import core.server.updater
 import core.attack
 import algorithms
 from core.utils.registry import (
-    MODEL_REGISTRY, 
-    AGGREGATOR_REGISTRY, 
-    SCREENER_REGISTRY, 
-    UPDATER_REGISTRY,
+    MODEL_REGISTRY,
     ALGORITHM_REGISTRY,
     METRIC_REGISTRY,
-    ATTACK_REGISTRY
+    ATTACK_REGISTRY,
 )
-
+from data.constants import (
+    OWNER_SERVER,
+    SPLIT_TRAIN,
+    SPLIT_TEST,
+    SPLIT_PROXY,
+    SPLIT_TEST_GLOBAL,
+)
 from data.task_generator import TaskGenerator
 from core.client.base_client import BaseClient
 from core.server.base_server import BaseServer
 
 import data.datasets
+
+# Runner 默认常量
+DEFAULT_SEED = 42
+DEFAULT_EVAL_INTERVAL = 5
+DEFAULT_LOCAL_EVAL_RATIO = 0.2
+DEFAULT_CLIENTS_FRACTION = 0.2
 
 class FederatedRunner:
     """
@@ -51,7 +60,8 @@ class FederatedRunner:
             use_wandb=config.get('use_wandb', False)
         )
         self.logger.info(f"Runner is configured to use device: {self.device}")
-        self._set_seed(config.get('seed', 42))
+        self.seed = config.get('seed', DEFAULT_SEED)
+        self._set_seed(self.seed)
         self.client_ids = []
         self._setup()
 
@@ -67,18 +77,17 @@ class FederatedRunner:
         os.environ['CUBLAS_WORKSPACE_CONFIG']=':4096:8'
         torch.use_deterministic_algorithms(True)
 
-    def _setup(self):
-        self.logger.info(">>> Initializing components...")
+    def _setup_data_pipeline(self):
+        """准备数据管道：划分器、TaskGenerator、任务与数据源。"""
+        from data.partitioner import DirichletPartitioner, IIDPartitioner
 
-        # 准备数据
-        # 假设 config['data'] 包含了 root, dataset_name, partitioner 等参数
-        from data.partitioner import DirichletPartitioner, IIDPartitioner # 临时引入
-        global_seed = self.config.get('seed', 42)
         part_conf = self.config['data']['partitioner']
         if part_conf['name'] == 'dirichlet':
-            partitioner = DirichletPartitioner(alpha=part_conf.get('alpha', 0.5), seed = global_seed)
+            partitioner = DirichletPartitioner(
+                alpha=part_conf.get('alpha', 0.9), seed=self.seed
+            )
         else:
-            partitioner = IIDPartitioner(seed = global_seed)
+            partitioner = IIDPartitioner(seed=self.seed)
 
         self.task_generator = TaskGenerator(
             dataset_name=self.config['data']['dataset'],
@@ -86,75 +95,96 @@ class FederatedRunner:
             partitioner=partitioner,
             num_clients=self.config['data']['num_clients'],
             val_ratio=self.config['data'].get('val_ratio', 0.1),
-            seed = global_seed
+            seed=self.seed,
         )
-        # 生成任务和数据源
         self.task_set, self.dataset_stores = self.task_generator.generate()
         self.logger.info(f"Data setup complete. Clients: {self.config['data']['num_clients']}")
 
-        # 准备模型构建函数 (Model Fn)
+    def _setup_model(self):
+        """准备模型构建函数与全局模型。"""
         model_conf = self.config['model']
         model_cls = MODEL_REGISTRY.get(model_conf['name'])
         self.model_fn = partial(model_cls, **model_conf.get('params', {}))
         self.global_model = self.model_fn().to(self.device)
 
-        # --- 提取 Server 任务 ---
-        self.server_test_task = self.task_set.get_task("server", "test_global")
+    def _setup_server_and_algorithm(self):
+        """提取 Server 任务、构建 Server 与 Client 类。"""
+        self.server_test_task = self.task_set.get_task(OWNER_SERVER, SPLIT_TEST_GLOBAL)
         self.server_dataset_store = self.dataset_stores[self.server_test_task.dataset_tag]
 
-        # 构造 Server Proxy Loader (用于BN校准)
-        # 通过 TaskSet 获取我们之前注入的 'proxy' 任务
-        if self.task_set.get_task("server", "proxy"):
-            proxy_task = self.task_set.get_task("server", "proxy")
-            proxy_store = self.dataset_stores[proxy_task.dataset_tag]
-            
-            # 使用临时的工具人Client复用data_load逻辑，或者直接创建DataLoader
-            # 为了简单和最小改动，我们借用一个临时Client来创建loader，确保配置一致性
-            temp_client = BaseClient("server_proxy_loader", self.device, self.model_fn)
-            self.server_proxy_loader = temp_client.data_load(
-                task=proxy_task,
-                dataset_store=proxy_store,
-                config=self.config['client'], # 复用 client 配置 (batch_size等)
-                mode='train' # train模式可能有shuffle
-            )
-            del temp_client
-        else:
-            self.server_proxy_loader = None
-        
-        algo_conf = self.config['algorithm'] # e.g. {'name': 'fedavg', 'params': {...}}
+        algo_conf = self.config['algorithm']
         self.server, self.client_class = ALGORITHM_REGISTRY.build(
             algo_conf['name'],
-            # --- 传递给 build_xxx_algorithm 的参数 ---
             model=self.global_model,
             device=self.device,
             dataset_store=self.dataset_stores,
             config=self.config,
-            seed=global_seed,
+            seed=self.seed,
             server_test_task=self.server_test_task,
             **algo_conf.get('params', {}),
         )
-
         self.logger.info(f"Algorithm Loaded: {algo_conf['name']}")
         self.logger.info(f"Server Type: {type(self.server).__name__}")
         self.logger.info(f"Client Type: {self.client_class.__name__}")
 
-        # 学习率调度器
         self.lr_scheduler = build_scheduler(self.config['training'])
 
-        # --- 设置攻击者 ---
-        self.logger.info(">>> Setting up attackers...")
-        self.client_ids = [cid for cid in self.task_set._tasks.keys() if cid != 'server']
+    def _setup_server_proxy_loader(self):
+        """构造 Server Proxy Loader（用于 BN 校准）。"""
+        proxy_task = self.task_set.try_get_task(OWNER_SERVER, SPLIT_PROXY)
+        if proxy_task is None:
+            self.server_proxy_loader = None
+            return
+        proxy_store = self.dataset_stores[proxy_task.dataset_tag]
+        self.server_proxy_loader = self._build_client_dataloader(
+            client_id="server_proxy_loader",
+            task=proxy_task,
+            dataset_store=proxy_store,
+            mode='train',
+        )
 
-        # AttackManager 内部会处理 config 为 None 的情况
-        self.attack_manager = AttackManager(config=self.config.get('attack'), \
-                                            all_client_ids=self.client_ids, seed=self.config.get('seed', 42))
-        
-        # 攻击者名单
+    def _setup_attack_manager(self):
+        """设置攻击者与攻击者名单。"""
+        self.logger.info(">>> Setting up attackers...")
+        self.client_ids = self.task_set.list_client_ids(exclude_server=True)
+        self.attack_manager = AttackManager(
+            config=self.config.get('attack'),
+            all_client_ids=self.client_ids,
+            seed=self.seed,
+        )
         self.attacker_ids = self.attack_manager.get_attacker_ids()
+
+    def _setup(self):
+        self.logger.info(">>> Initializing components...")
+        self._setup_data_pipeline()
+        self._setup_model()
+        self._setup_server_and_algorithm()
+        self._setup_server_proxy_loader()
+        self._setup_attack_manager()
+
+    def _build_client_dataloader(
+        self,
+        client_id: str,
+        task,
+        dataset_store,
+        mode: str = 'test',
+        attack_profile=None,
+    ):
+        """使用临时 Client 构建 DataLoader，复用 data_load 逻辑，构建后立即销毁 Client。"""
+        temp_client = self.client_class(client_id, self.device, self.model_fn)
+        loader = temp_client.data_load(
+            task=task,
+            dataset_store=dataset_store,
+            config=self.config['client'],
+            mode=mode,
+            attack_profile=attack_profile,
+        )
+        del temp_client
+        return loader
 
     def run(self):
         total_rounds = self.config['training']['rounds']
-        eval_interval = self.config['training'].get('eval_interval', 5)
+        eval_interval = self.config['training'].get('eval_interval', DEFAULT_EVAL_INTERVAL)
         
         self.logger.info(">>> Start Training...")
         
@@ -211,7 +241,7 @@ class FederatedRunner:
                 attack_strategy = self.attack_manager.get_strategy(cid)
             
             client = self.client_class(cid, self.device, self.model_fn)
-            task = self.task_set.get_task(cid, "train")
+            task = self.task_set.get_task(cid, SPLIT_TRAIN)
             store = self.dataset_stores[task.dataset_tag]
             
             payload = client.execute(
@@ -232,83 +262,58 @@ class FederatedRunner:
     def _run_global_evaluation(self, round_idx):
         """
         执行全局评估（主任务 + 各攻击组任务）。
-        
-        流程：
-        1. 在干净的全局测试集上评估主任务指标 (ACC, Loss)。
-        2. 遍历配置中的每个攻击组，在被该组策略污染的全局测试集上评估攻击指标 (ASR)。
+        流程:1. 干净全局测试; 2. 各攻击组评估。
         """
-        
-        # 从配置读取全局指标 (通常是 acc, loss)
+        clean_metrics = self._eval_clean_global(round_idx)
+        self._eval_attack_groups(round_idx)
+        return clean_metrics
+
+    def _eval_clean_global(self, round_idx):
+        """在干净全局测试集上评估主任务指标 (ACC, Loss)。"""
         global_metric_confs = self.config.get('evaluation', {}).get('global', [{'name': 'acc'}])
         clean_metric_objs = self._build_metrics(global_metric_confs)
-        # 默认使用 Server 内部的干净 test_loader
         clean_metrics = self.server.eval(metrics=clean_metric_objs)
-        
-        # 记录日志
+
         self.logger.log_metrics(clean_metrics, step=round_idx)
-        
-        # 打印主任务结果 (用于控制台监控)
         first_key = list(clean_metrics.keys())[0] if clean_metrics else "N/A"
         first_val = clean_metrics.get(first_key, 0)
         self.logger.info(f"Global Eval (Clean): {first_key} = {first_val:.4f}")
-        
-        # 获取攻击策略配置
+        return clean_metrics
+
+    def _eval_attack_groups(self, round_idx):
+        """遍历各攻击组，在被污染测试集上评估攻击指标 (ASR)。"""
         attackers_conf = self.config.get('attack', {}).get('strategies', {})
-        # 如果没有配置攻击，或者没有 AttackManager，直接返回
         if not attackers_conf or not self.attack_manager:
-            return clean_metrics 
+            return
 
-        # 实例化一个工具人 Client，用于复用 data_load 逻辑生成带毒数据
-        # 注意：这里我们使用 self.client_class 确保兼容不同算法定制的 Client
-        tool_client = self.client_class(client_id="server_eval_tool", device=self.device, model_fn=self.model_fn)
-
-        # 遍历每个攻击组 (例如 'badnets_group', 'scaling_group')
         for group_name, group_config in attackers_conf.items():
-        
-            # 检查该组是否定义了评估指标
             eval_conf = group_config.get('evaluation')
             if not eval_conf:
-                continue 
-                
-            # 该组专属的 Metrics (通常是 ASR)
+                continue
+
             group_metrics = self._build_metrics(eval_conf)
-            
-            # 构建攻击策略实例
             strategy_conf = group_config['strategy']
-            params = strategy_conf.get('params', {}).copy()
-            params['seed'] = self.config.get('seed', 42)
             eval_strategy = ATTACK_REGISTRY.build(
-                strategy_conf['name'], 
-                **strategy_conf.get('params', {})
+                strategy_conf['name'],
+                **strategy_conf.get('params', {}),
             )
-            
-            # 生成带毒测试集 (通过工具人 Client)
-            poisoned_loader = tool_client.data_load(
+
+            poisoned_loader = self._build_client_dataloader(
+                client_id="server_eval_tool",
                 task=self.server_test_task,
                 dataset_store=self.server_dataset_store,
-                config=self.config['client'], # 复用 Client 的 batch_size 等配置
-                attack_profile=eval_strategy, # 注入攻击策略
-                mode='test' 
+                mode='test',
+                attack_profile=eval_strategy,
             )
             attack_metrics = self.server.eval(
                 metrics=group_metrics,
-                dataloader=poisoned_loader
+                dataloader=poisoned_loader,
             )
-            
-            # 记录日志 (加前缀区分，例如 "badnets_group/asr")
             prefixed_metrics = {f"{group_name}/{k}": v for k, v in attack_metrics.items()}
             self.logger.log_metrics(prefixed_metrics, step=round_idx)
             res_str = ", ".join([f"{k}={v:.4f}" for k, v in attack_metrics.items()])
             self.logger.info(f"Global Eval ({group_name}): {res_str}")
-            
-            # 及时清理大对象
             del poisoned_loader
-
-        # 清理工具人
-        del tool_client
-
-        # 返回干净指标，供外部使用 (如保存 Checkpoint)
-        return clean_metrics
         
     def _run_local_evaluation(self, round_idx, config, metrics):
         """
@@ -317,18 +322,18 @@ class FederatedRunner:
             metrics: 由 _build_metrics 构建好的 Metric 对象列表
         """
         
-        all_clients = list(self.task_set._tasks.keys())
-        
-        client_candidates = [c for c in all_clients if c != 'server']
-        
-        eval_ids = random.sample(client_candidates, k=max(1, int(len(client_candidates) * 0.2)))
+        client_candidates = self.task_set.list_client_ids(exclude_server=True)
+        eval_ids = random.sample(
+            client_candidates,
+            k=max(1, int(len(client_candidates) * DEFAULT_LOCAL_EVAL_RATIO)),
+        )
 
         results_collector = {m.name: [] for m in metrics}
         
         for cid in eval_ids:
             # 使用动态 Client 类
             client = self.client_class(cid, self.device, self.model_fn)
-            task = self.task_set.get_task(cid, "test") 
+            task = self.task_set.get_task(cid, SPLIT_TEST) 
             store = self.dataset_stores[task.dataset_tag]
             
             # 获取模型
@@ -388,7 +393,7 @@ class FederatedRunner:
         区别于单纯调用server.select_clients,本函数目的为服务后续攻击者采样的拓展
         """
         
-        clients_frac = self.config['training'].get('clients_fraction', 0.2)
+        clients_frac = self.config['training'].get('clients_fraction', DEFAULT_CLIENTS_FRACTION)
         num_select = int(len(self.client_ids) * clients_frac)
         selected_ids = []
         attacker_frac = self.config['training'].get('attackers_frac', None)

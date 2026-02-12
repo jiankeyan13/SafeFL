@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 
 @dataclass
@@ -31,6 +31,13 @@ class TaskSet:
         if self.has_task(oid, split):
             return self._tasks[oid][split]
         return None
+
+    def list_client_ids(self, exclude_server: bool = True) -> List[str]:
+        """返回所有 owner 的 id 列表。exclude_server=True 时排除 server。"""
+        ids = list(self._tasks.keys())
+        if exclude_server:
+            ids = [cid for cid in ids if cid != "server"]
+        return ids
 
     def __str__(self) -> str:
         return str(self._tasks)
