@@ -5,7 +5,10 @@ import numpy as np
 from functools import partial
 from typing import Dict, Any, List, Callable
 
-from core.runner import FederatedRunner
+from core.runner import (
+    FederatedRunner,
+    DEFAULT_LOCAL_EVAL_RATIO,
+)
 from core.utils.registry import MODEL_REGISTRY, AGGREGATOR_REGISTRY, SCREENER_REGISTRY
 from core.utils.scheduler import build_scheduler
 from core.client.base_client import BaseClient
@@ -13,8 +16,12 @@ from core.server.updater.base_updater import BaseUpdater
 from extension.HFL.fedrolex_server import FedrolexServer
 from extension.HFL.cap_manager import CapManager
 import extension.HFL.sub_aggregator  # noqa: F401 - 注册 sub_avg 聚合器
-from data.task_generator import TaskGenerator
-from torch.utils.data import Subset, DataLoader
+from data.constants import (
+    OWNER_SERVER,
+    SPLIT_TRAIN,
+    SPLIT_TEST,
+    SPLIT_TEST_GLOBAL,
+)
 
 
 class HeteroRunner(FederatedRunner):
@@ -41,24 +48,8 @@ class HeteroRunner(FederatedRunner):
         self.logger.info(">>> Initializing Heterogeneous FL components...")
 
         # 1. 准备数据（复用父类逻辑）
-        from data.partitioner import DirichletPartitioner, IIDPartitioner
-        global_seed = self.config.get('seed', 42)
-        part_conf = self.config['data']['partitioner']
-        if part_conf['name'] == 'dirichlet':
-            partitioner = DirichletPartitioner(alpha=part_conf.get('alpha', 0.5), seed=global_seed)
-        else:
-            partitioner = IIDPartitioner(seed=global_seed)
-
-        self.task_generator = TaskGenerator(
-            dataset_name=self.config['data']['dataset'],
-            root=self.config['data']['root'],
-            partitioner=partitioner,
-            num_clients=self.config['data']['num_clients'],
-            val_ratio=self.config['data'].get('val_ratio', 0.1),
-            seed=global_seed
-        )
-        self.task_set, self.dataset_stores = self.task_generator.generate()
-        self.logger.info(f"Data setup complete. Clients: {self.config['data']['num_clients']}")
+        global_seed = self.seed
+        self._setup_data_pipeline()
 
         # 2. 准备全局模型（全量模型，p=1.0）
         model_conf = self.config['model']
@@ -69,26 +60,11 @@ class HeteroRunner(FederatedRunner):
         self.model_cls = model_cls  # 保存模型类，用于后续动态构建
 
         # 3. 提取 Server 任务
-        self.server_test_task = self.task_set.get_task("server", "test_global")
+        self.server_test_task = self.task_set.get_task(OWNER_SERVER, SPLIT_TEST_GLOBAL)
         self.server_dataset_store = self.dataset_stores[self.server_test_task.dataset_tag]
 
-        # 4. 构造 Server Proxy Loader（用于BN校准）
-        if self.task_set.get_task("server", "proxy"):
-            proxy_task = self.task_set.get_task("server", "proxy")
-            proxy_store = self.dataset_stores[proxy_task.dataset_tag]
-            temp_client = BaseClient("server_proxy_loader", self.device, self.model_fn)
-            self.server_proxy_loader = temp_client.data_load(
-                task=proxy_task,
-                dataset_store=proxy_store,
-                config=self.config['client'],
-                mode='train'
-            )
-            del temp_client
-        else:
-            self.server_proxy_loader = None
-
         # 5. 初始化 CapManager 并注册客户端
-        self.client_ids = [cid for cid in self.task_set._tasks.keys() if cid != 'server']
+        self.client_ids = self.task_set.list_client_ids(exclude_server=True)
         hetero_config = self.config.get('hetero', {})
         if not hetero_config:
             raise ValueError("HeteroRunner requires 'hetero' config section with 'sample' and 'p_list'.")
@@ -118,17 +94,17 @@ class HeteroRunner(FederatedRunner):
         updater_conf = server_conf.get('updater', {})
         updater = BaseUpdater(config=updater_conf)
         
+        # 使用标准 BaseClient 构建 dataloader
+        self.client_class = BaseClient
+
         # 构建测试集 DataLoader
         test_loader = None
         if self.server_test_task:
-            test_ds_store = self.dataset_stores[self.server_test_task.dataset_tag]
-            server_dataset = Subset(test_ds_store, self.server_test_task.indices)
-            batch_size = self.config.get('client', {}).get('batch_size', 64)
-            test_loader = DataLoader(
-                server_dataset, 
-                batch_size=batch_size, 
-                shuffle=False, 
-                num_workers=0
+            test_loader = self._build_client_dataloader(
+                client_id="server_test_loader",
+                task=self.server_test_task,
+                dataset_store=self.server_dataset_store,
+                mode='test',
             )
 
         # 创建 FedrolexServer（关键：传入 cap_manager，使用滚动选取替代随机选取）
@@ -142,7 +118,8 @@ class HeteroRunner(FederatedRunner):
             test_loader=test_loader,
             seed=global_seed
         )
-        self.client_class = BaseClient  # 使用标准 BaseClient
+        # 构造 Server Proxy Loader（用于 BN 校准）
+        self._setup_server_proxy_loader()
 
         self.logger.info(f"Server Type: {type(self.server).__name__}")
         self.logger.info(f"Client Type: {self.client_class.__name__}")
@@ -150,15 +127,8 @@ class HeteroRunner(FederatedRunner):
         # 7. 学习率调度器
         self.lr_scheduler = build_scheduler(self.config['training'])
 
-        # 8. 设置攻击者
-        self.logger.info(">>> Setting up attackers...")
-        from core.client.attack_manager import AttackManager
-        self.attack_manager = AttackManager(
-            config=self.config.get('attack'),
-            all_client_ids=self.client_ids,
-            seed=global_seed
-        )
-        self.attacker_ids = self.attack_manager.get_attacker_ids()
+        # 8. 设置攻击者（复用父类逻辑）
+        self._setup_attack_manager()
 
     def _get_client_model_fn(self, client_id: str) -> Callable[[], torch.nn.Module]:
         """
@@ -214,7 +184,7 @@ class HeteroRunner(FederatedRunner):
             client_model_fn = self._get_client_model_fn(cid)
             client = self.client_class(cid, self.device, client_model_fn)
             
-            task = self.task_set.get_task(cid, "train")
+            task = self.task_set.get_task(cid, SPLIT_TRAIN)
             store = self.dataset_stores[task.dataset_tag]
             
             payload = client.execute(
@@ -250,12 +220,11 @@ class HeteroRunner(FederatedRunner):
             - 构建对应的 HeteroResNet(p=...) 进行评估
             - 否则加载 Server 下发的子模型权重时会报 Shape Mismatch 错误
         """
-        all_clients = list(self.task_set._tasks.keys())
-        client_candidates = [c for c in all_clients if c != 'server']
+        client_candidates = self.task_set.list_client_ids(exclude_server=True)
         
         eval_ids = random.sample(
             client_candidates, 
-            k=max(1, int(len(client_candidates) * 0.2))
+            k=max(1, int(len(client_candidates) * DEFAULT_LOCAL_EVAL_RATIO))
         )
 
         results_collector = {m.name: [] for m in metrics}
@@ -265,7 +234,7 @@ class HeteroRunner(FederatedRunner):
             client_model_fn = self._get_client_model_fn(cid)
             client = self.client_class(cid, self.device, client_model_fn)
             
-            task = self.task_set.get_task(cid, "test")
+            task = self.task_set.get_task(cid, SPLIT_TEST)
             store = self.dataset_stores[task.dataset_tag]
             
             # 获取模型（Server 会下发剪枝后的子模型）
