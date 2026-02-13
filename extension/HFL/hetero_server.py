@@ -1,6 +1,6 @@
 import copy
 import math
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 import numpy as np
 import torch
@@ -105,46 +105,55 @@ class HeteroServer(BaseServer):
         return sorted(chosen.tolist())
 
     def compute_delta(self, client_weights: Dict[str, torch.Tensor], \
-                     client_id: str) -> Dict[str, torch.Tensor]:
-        """将子模型更新映射回全局维度，未参与更新的位置填充0，生成稀疏Delta矩阵"""
+                     client_id: str) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+        """将子模型更新映射回全局维度，并返回显式参与掩码"""
         order_book = self._client_orders.get(client_id, {})
         g_state = {k: v.float().cpu() for k, v in self.global_model.state_dict().items()}
-        delta: Dict[str, torch.Tensor] = {k: torch.zeros_like(v) for k, v in g_state.items() \
-                                         if 'num_batches_tracked' not in k}
+        dlt: Dict[str, torch.Tensor] = {k: torch.zeros_like(v) for k, v in g_state.items() \
+                                        if 'num_batches_tracked' not in k}
+        msk: Dict[str, torch.Tensor] = {k: torch.zeros_like(v) for k, v in g_state.items() \
+                                        if 'num_batches_tracked' not in k}
 
         if not order_book:
-            for k in delta:
+            for k in dlt:
                 if k in client_weights:
-                    delta[k] = client_weights[k].float().cpu() - g_state[k]
-            return delta
+                    c = client_weights[k].float().cpu()
+                    dlt[k] = c - g_state[k]
+                    msk[k] = torch.ones_like(dlt[k])
+            return dlt, msk
 
         for k, mapping in order_book.items():
             if k not in client_weights:
                 continue
             c = client_weights[k].float().cpu()
             if isinstance(mapping, tuple):
-                oi, ii = mapping
-                ot = torch.tensor(oi, dtype=torch.long)
-                it = torch.tensor(ii, dtype=torch.long)
-                orig = g_state[k][ot][:, it]
-                delta[k][ot[:, None], it] = c - orig
+                idx_o, idx_i = mapping
+                t_o = torch.tensor(idx_o, dtype=torch.long)
+                t_i = torch.tensor(idx_i, dtype=torch.long)
+                g = g_state[k][t_o][:, t_i]
+                dlt[k][t_o[:, None], t_i] = c - g
+                msk[k][t_o[:, None], t_i] = 1.0
             else:
-                orig = g_state[k][mapping]
-                delta[k][mapping] = c - orig
-        return delta
+                g = g_state[k][mapping]
+                dlt[k][mapping] = c - g
+                msk[k][mapping] = 1.0
+        return dlt, msk
 
     def step(self, updates, proxy_loader=None):
         """防御流水线：通过client_id定位索引账本"""
         context: Dict[str, Any] = {}
         num_samples = [u['num_samples'] for u in updates]
-        client_deltas = [self.compute_delta(u['weights'], u['client_id']) for u in updates]
+        dlt_msk = [self.compute_delta(u['weights'], u['client_id']) for u in updates]
+        dlt_list = [x[0] for x in dlt_msk]
+        msk_list = [x[1] for x in dlt_msk]
 
-        screen_scores, context = self.screener.screen(client_deltas=client_deltas, \
+        screen_scores, context = self.screener.screen(client_deltas=dlt_list, \
                                                       num_samples=num_samples, \
                                                       global_model=self.global_model, \
                                                       context=context)
 
-        agg_weights, context = self.aggregator.aggregate(updates=client_deltas, \
+        context['masks'] = msk_list
+        agg_weights, context = self.aggregator.aggregate(updates=dlt_list, \
                                                          sample_weights=num_samples, \
                                                          screen_scores=screen_scores, \
                                                          global_model=self.global_model, \

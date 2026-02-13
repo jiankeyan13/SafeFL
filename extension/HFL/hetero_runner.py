@@ -10,8 +10,9 @@ from core.utils.registry import MODEL_REGISTRY, AGGREGATOR_REGISTRY, SCREENER_RE
 from core.utils.scheduler import build_scheduler
 from core.client.base_client import BaseClient
 from core.server.updater.base_updater import BaseUpdater
-from extension.HFL.hetero_server import HeteroServer
+from extension.HFL.fedrolex_server import FedrolexServer
 from extension.HFL.cap_manager import CapManager
+import extension.HFL.sub_aggregator  # noqa: F401 - 注册 sub_avg 聚合器
 from data.task_generator import TaskGenerator
 from torch.utils.data import Subset, DataLoader
 
@@ -22,7 +23,7 @@ class HeteroRunner(FederatedRunner):
     
     继承自 FederatedRunner，针对模型异构场景（结构化剪枝）进行扩展：
     1. 初始化 CapManager 并注册客户端能力
-    2. 构建 HeteroServer（支持动态子模型提取）
+    2. 构建 FedrolexServer（支持动态子模型提取与滚动选取）
     3. 为每个客户端动态构建匹配其 p 值的模型架构
     4. 在训练和评估时确保模型架构与剪枝结构一致
     """
@@ -34,7 +35,7 @@ class HeteroRunner(FederatedRunner):
         流程：
         1. 调用父类方法完成数据、全局模型等基础初始化
         2. 初始化 CapManager 并注册所有客户端
-        3. 构建 HeteroServer（传入 cap_manager）
+        3. 构建 FedrolexServer（传入 cap_manager）
         4. 设置学习率调度器和攻击管理器
         """
         self.logger.info(">>> Initializing Heterogeneous FL components...")
@@ -96,7 +97,7 @@ class HeteroRunner(FederatedRunner):
         self.cap_manager.register_clients(self.client_ids)
         self.logger.info(f"CapManager initialized. Summary: {self.cap_manager.summary()}")
 
-        # 6. 构建 HeteroServer（直接构建，不通过算法注册表）
+        # 6. 构建 FedrolexServer（直接构建，不通过算法注册表）
         server_conf = self.config.get('server', {})
         
         # 构建聚合器
@@ -130,8 +131,8 @@ class HeteroRunner(FederatedRunner):
                 num_workers=0
             )
 
-        # 创建 HeteroServer（关键：传入 cap_manager）
-        self.server = HeteroServer(
+        # 创建 FedrolexServer（关键：传入 cap_manager，使用滚动选取替代随机选取）
+        self.server = FedrolexServer(
             model=self.global_model,
             device=self.device,
             cap_manager=self.cap_manager,

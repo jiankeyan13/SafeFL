@@ -7,7 +7,7 @@ from core.utils.registry import AGGREGATOR_REGISTRY
 @AGGREGATOR_REGISTRY.register("sub_avg")
 class SubAvgAggregator(BaseAggregator):
     """
-    子模型聚合器 (Sub-model Aggregator)，采用"基于零值推断的动态掩码聚合"策略。
+    子模型聚合器 (Sub-model Aggregator)，采用"掩码感知的动态归一化聚合"策略。
     
     适用场景：
         - 模型异构联邦学习：客户端通过结构化剪枝仅训练全局模型的子集
@@ -19,7 +19,8 @@ class SubAvgAggregator(BaseAggregator):
         - 分母仅包含更新了该参数的客户端权重之和，消除稀释效应
     
     实现逻辑：
-        1. 零值推断 (Zero Inference): 利用 Delta 中的 0 值生成二进制掩码
+        1. 显式掩码 (Explicit Mask): 优先使用服务端提供的参与掩码
+           （兼容回退：无掩码时使用零值推断）
         2. 软加权结合 (Soft-Weighted Integration): 分子加权求和，分母累加有效权重
         3. 按位还原 (Element-wise Restoration): 分子除以分母得到加权平均
     """
@@ -64,6 +65,7 @@ class SubAvgAggregator(BaseAggregator):
 
         context = context or {}
         num_clients = len(updates)
+        masks = context.get('masks')
 
         # ===== Step 0: 融合 sample_weights 和 screen_scores =====
         if sample_weights is None:
@@ -71,43 +73,47 @@ class SubAvgAggregator(BaseAggregator):
         if screen_scores is None:
             screen_scores = [1.0] * num_clients
 
-        combined_weights = [s * sc for s, sc in zip(sample_weights, screen_scores)]
-        self._check_inputs(updates, combined_weights)
+        w = [s * sc for s, sc in zip(sample_weights, screen_scores)]
+        self._check_inputs(updates, w)
         
         # 注意：这里不做全局归一化，因为我们需要逐元素动态归一化
-        w_tensor = torch.tensor(combined_weights, dtype=torch.float32, device=self.device)
+        w_t = torch.tensor(w, dtype=torch.float32, device=self.device)
 
-        aggregated_deltas = {}
+        agg_dlt = {}
         layer_names = updates[0].keys()
 
         for name in layer_names:
             # ===== Step 1: 堆叠所有客户端的 Delta =====
             # layer_stack shape: [num_clients, *param_shape]
-            layer_stack = torch.stack(
+            dlt_s = torch.stack(
                 [u[name].to(torch.float32) for u in updates]
             ).to(self.device)
 
-            # ===== Step 2: 零值推断生成掩码 =====
-            # mask shape: [num_clients, *param_shape]，非零位置为 1，零位置为 0
-            mask = (layer_stack != 0).float()
+            # ===== Step 2: 生成掩码（优先显式掩码）=====
+            if masks is not None:
+                msk_s = torch.stack(
+                    [m[name].to(torch.float32) for m in masks]
+                ).to(self.device)
+            else:
+                msk_s = (dlt_s != 0).float()
 
             # ===== Step 3: 计算逐元素的有效权重和（分母）=====
             # 将权重 tensor 广播到与 layer_stack 相同的形状
-            w_view_shape = [num_clients] + [1] * (layer_stack.dim() - 1)
-            w_view = w_tensor.view(*w_view_shape)  # shape: [num_clients, 1, 1, ...]
+            w_shape = [num_clients] + [1] * (dlt_s.dim() - 1)
+            w_view = w_t.view(*w_shape)  # shape: [num_clients, 1, 1, ...]
 
             # 有效权重 = 掩码 * 权重，然后沿客户端维度求和
             # denominator shape: [*param_shape]
-            denominator = torch.sum(mask * w_view, dim=0)
+            den = torch.sum(msk_s * w_view, dim=0)
 
             # ===== Step 4: 计算加权 Delta 和（分子）=====
             # numerator shape: [*param_shape]
-            numerator = torch.sum(layer_stack * w_view, dim=0)
+            num = torch.sum(dlt_s * w_view, dim=0)
 
             # ===== Step 5: 按位还原（逐元素除法）=====
             # 对于被剪枝区域: 0 / eps ≈ 0（保持未更新状态）
             # 对于重叠区域: 得到参与该参数训练的客户端的加权平均值
-            aggregated_deltas[name] = numerator / (denominator + self.eps)
+            agg_dlt[name] = num / (den + self.eps)
 
         # ===== Step 6: 构建完整的 state_dict: Base + Delta =====
         final_weights = {}
@@ -115,8 +121,8 @@ class SubAvgAggregator(BaseAggregator):
 
         for key, value in global_state.items():
             final_weights[key] = value.clone()
-            if key in aggregated_deltas:
-                delta = aggregated_deltas[key].to(device=value.device, dtype=value.dtype)
+            if key in agg_dlt:
+                delta = agg_dlt[key].to(device=value.device, dtype=value.dtype)
                 final_weights[key] += delta
 
         return final_weights, context
