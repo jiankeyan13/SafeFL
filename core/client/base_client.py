@@ -24,8 +24,7 @@ class BaseClient:
         model: nn.Module,
         device: torch.device,
         config: ClientConfig,
-        evaluator: Optional[Evaluator] = None,
-        loss: Optional[nn.Module] = None,
+        evaluator: Optional[Evaluator] = None
     ):
         """
         初始化客户端状态。
@@ -38,7 +37,6 @@ class BaseClient:
             device: 模型训练/推理所在设备。
             config: 客户端配置 (ClientConfig)，包含 TrainerConfig。
             evaluator: 联邦指标评估器，若无则默认使用内置 Evaluator。
-            loss: 损失函数，若无则根据 config 构建。
         """
         if isinstance(client_id, int):
             self.client_id = client_id
@@ -53,7 +51,7 @@ class BaseClient:
         self.device = device
         self.config = config
         self.evaluator = evaluator or Evaluator()
-        self.loss = loss or config.trainer_config.build_criterion()
+        self.loss = config.trainer_config.build_criterion()
 
         self.train_loader = self._create_train_dataloader()
         self.test_loader = self._create_test_dataloader()
@@ -161,10 +159,10 @@ class BaseClient:
     def evaluate(self) -> Dict[str, float]:
         """
         在本地测试集执行测试模型评估。
-        依赖内置 Evaluator。若输入被恶意污染（如触发后门），该方法的准确率返回值即对应 ASR 攻击成功率。
+        依赖内置 Evaluator。若输入被恶意污染(如触发后门),该方法的准确率返回值即对应 ASR 攻击成功率。
 
         Returns:
-            各项评估指标得分（例如 {"accuracy": 0.98, "loss": 0.05}）。
+            各项评估指标得分(例如 {"accuracy": 0.98, "loss": 0.05})。
         """
         if self.test_loader is None:
             return {}
@@ -177,7 +175,7 @@ class BaseClient:
         打包客户端想要向上传递的数据集合，用于被服务端的聚合器收集。
 
         Returns:
-            最终 payload 字典（包含 "client_id", "delta", "num_samples"）。
+            最终 payload 字典(包含 "client_id", "delta", "num_samples")。
         """
         return {
             "client_id": self.owner_id,
@@ -192,10 +190,10 @@ class BaseClient:
         依次发生：接收 -> 训练 -> 评估 -> 组装并发送。
 
         Args:
-            server_payload: Server 对 Client 在这一 Round 投喂的完整通信包裹（state_dict）。
+            server_payload: Server 对 Client 在这一 Round 投喂的完整通信包裹(state_dict)。
 
         Returns:
-            Client 投递给 Server 的所有必要信息（结合 package 的结果加上评价指标）。
+            Client 投递给 Server 的所有必要信息(结合 package 的结果加上评价指标)。
         """
         self.receive(server_payload)
         train_metrics = self.train()
