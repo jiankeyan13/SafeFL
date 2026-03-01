@@ -1,0 +1,80 @@
+# --- 实验元数据 ---
+project: "FL-Test"
+name: "deepsight"
+seed: 2025
+device: "cuda"
+use_wandb: true
+
+# --- 数据配置 ---
+data:
+  dataset: "cifar10"
+  root: "./data_source"
+  num_clients: 20          # 客户端总数
+  val_ratio: 0.1
+  partitioner:
+    name: "dirichlet"
+    alpha: 1.0
+
+# --- 模型配置 ---
+model:
+  name: "resnet18"
+  params:
+    num_classes: 10
+
+# --- 算法配置 ---
+algorithm:
+  name: "deepsight"
+
+# --- 攻击者配置 ---
+attack:
+  fraction: 0.2
+  strategies:
+    badnets_group:
+      fraction: 1.0
+      strategy:
+        name: "badnets"
+        params:
+          target_label: 0
+          poison_ratio: 0.5
+          patch_size: 3
+          location: 'bottom_right'
+      evaluation:
+        - name: "asr"
+          params:
+            target_label: 0
+
+# --- 服务器组件配置 ---
+server:
+  screener:
+    name: "deepsight"
+  aggregator:
+    name: "flame_aggregator"
+  updater:
+    name: "base_updater"
+
+# --- 训练流程配置 ---
+training:
+  rounds: 50
+  clients_fraction: 0.5
+  attackers_frac: 0.2
+  eval_interval: 10
+  scheduler: "cosine"
+  lr: 0.01
+  min_lr: 0.001
+  warmup_rounds: 5
+
+# --- 客户端本地训练配置 ---
+client:
+  epochs: 1
+  batch_size: 32
+  momentum: 0.9
+  weight_decay: 0.0005
+
+# --- 全局评估指标 ---
+evaluation:
+  global:
+    - name: "acc"
+    - name: "loss"
+  local:
+    - name: "acc"
+

@@ -1,0 +1,24 @@
+# --- Python 编译文件 (必须忽略) ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- 实验日志与产出 (不要上传几百兆的日志) ---
+logs/
+wandb/
+trash/
+tests/
+# --- 数据集 (不要上传 CIFAR10 数据) ---
+data_source/
+
+# --- 模型权重 Checkpoints (不要上传大文件) ---
+*.pth
+*.pt
+*.ckpt
+
+# --- IDE 配置 (每个人用的编辑器不一样，不要上传) ---
+.vscode/
+.idea/
+
+# --- Mac 系统垃圾文件 ---
+.DS_Store
