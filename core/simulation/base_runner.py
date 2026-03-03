@@ -57,8 +57,11 @@ class BaseRunner:
         self.eval_loader:     Optional[DataLoader] = None
         self.proxy_loader:    Optional[DataLoader] = None
 
-        # Logger 在 _setup 中构造, _setup 末尾才 start() (唯一触发 IO 的时机)
-        self.logger: Logger = Logger.from_config(config)
+        # Logger 从 GlobalConfig.logger_config 构建, _setup 末尾才 start() (唯一触发 IO 的时机)
+        self.logger: Logger = Logger.from_logger_config(
+            self.global_config.logger_config,
+            self.config,
+        )
 
         self._setup()
 

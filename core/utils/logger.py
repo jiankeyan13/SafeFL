@@ -13,6 +13,10 @@ logger.py — SafeFL 统一日志管理器
 from __future__ import annotations
 
 import csv
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.utils.configs import LoggerConfig
 import json
 import logging
 import os
@@ -220,8 +224,25 @@ class Logger:
     """
 
     # ------------------------------------------------------------------
-    # 工厂方法 — 从框架 config 字典快速构建
+    # 工厂方法 — 从框架 config 字典或 LoggerConfig 快速构建
     # ------------------------------------------------------------------
+
+    @classmethod
+    def from_logger_config(
+        cls,
+        logger_config: "LoggerConfig",
+        full_config: Dict[str, Any],
+    ) -> "Logger":
+        """
+        从 LoggerConfig 构建 Logger, 不触发任何 IO.
+
+        Args:
+            logger_config: 来自 GlobalConfig.logger_config
+            full_config: 完整实验配置 (用于 config.json 持久化)
+        """
+        d = logger_config.to_dict()
+        d.update(full_config)  # 合并以便 from_config 读取
+        return cls.from_config(d)
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "Logger":
@@ -241,7 +262,7 @@ class Logger:
         return cls(
             project_name=config.get("project", "FL_Project"),
             experiment_name=config.get("name", "experiment"),
-            config=config,
+            config=config,\
             log_root=config.get("log_root", "./logs"),
             log_level=config.get("log_level", "INFO"),
             use_wandb=config.get("use_wandb", False),

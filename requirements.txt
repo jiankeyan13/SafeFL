@@ -1,0 +1,20 @@
+# SafeFL dependencies (from codebase analysis)
+# Python 3.8+ recommended
+
+# Core ML
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.21.0,<2.0.0
+
+# Data & IO
+Pillow>=9.0.0
+tqdm>=4.62.0
+
+# Clustering (FLAME / DeepSight screener)
+hdbscan>=0.8.33
+
+# Experiment logging (optional, used in wandb_helper and Logger)
+wandb>=0.15.0
+
+# Config (origion/main.py)
+PyYAML>=6.0

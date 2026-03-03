@@ -1,6 +1,6 @@
 import torch
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 @dataclass
 class TrainerConfig:
@@ -134,6 +134,128 @@ class PartitionerConfig:
 
 
 @dataclass
+class AttackStrategyConfig:
+    """
+    单个攻击策略的配置。
+    """
+    name: str = "badnets"
+    fraction: float = 1.0  # 占所有恶意客户端的比例
+    params: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'AttackStrategyConfig':
+        """从字典解析配置"""
+        if not config_dict:
+            return cls()
+        return cls(
+            name=config_dict.get("name", "badnets"),
+            fraction=config_dict.get("fraction", 1.0),
+            params=config_dict.get("params", {})
+        )
+
+
+@dataclass
+class AttackConfig:
+    """
+    攻击全局配置。
+    """
+    enabled: bool = False
+    malicious_fraction: float = 0.2  # 恶意客户端占总客户端的比例
+    per_round_fraction: float = 0.2   # 每轮选中者中恶意客户端的比例
+    strategies: List[AttackStrategyConfig] = field(
+        default_factory=lambda: [AttackStrategyConfig()]
+    )
+
+    def __post_init__(self) -> None:
+        if self.enabled:
+            assert self.per_round_fraction <= self.malicious_fraction, (
+                "per_round_fraction 不能超过 malicious_fraction"
+            )
+            total = sum(s.fraction for s in self.strategies)
+            assert abs(total - 1.0) < 1e-6, (
+                f"strategies 的 fraction 之和应为 1.0, 当前为 {total}"
+            )
+
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'AttackConfig':
+        """从字典解析配置"""
+        if not config_dict:
+            return cls()
+        strategies_raw = config_dict.get("strategies", [])
+        strategies = [
+            AttackStrategyConfig.from_dict(s) if isinstance(s, dict) else s
+            for s in strategies_raw
+        ]
+        if not strategies:
+            strategies = [AttackStrategyConfig()]
+        return cls(
+            enabled=config_dict.get("enabled", False),
+            malicious_fraction=config_dict.get("malicious_fraction", 0.2),
+            per_round_fraction=config_dict.get("per_round_fraction", 0.2),
+            strategies=strategies
+        )
+
+
+@dataclass
+class LoggerConfig:
+    """
+    配置 Logger 的参数 (取代 Logger 构造时的硬编码默认值).
+    与 core.utils.logger.Logger 的 from_config 参数一一对应.
+    """
+    project: str = "FL_Project"
+    name: str = "experiment"
+    log_root: str = "./logs"
+    log_level: str = "INFO"
+    use_wandb: bool = False
+    use_tensorboard: bool = False
+    use_csv: bool = False
+    console_metrics: bool = True
+    save_interval: int = 10  # 检查点保存间隔 (轮次)
+
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> "LoggerConfig":
+        """从字典解析配置, 支持 logging 嵌套或扁平键."""
+        if not config_dict:
+            return cls()
+        # 优先从 logging 嵌套中解析
+        logging_section = config_dict.get("logging")
+        d = logging_section if isinstance(logging_section, dict) else config_dict
+        kwargs = {}
+        for key in [
+            "project", "name", "log_root", "log_level",
+            "use_wandb", "use_tensorboard", "use_csv", "console_metrics", "save_interval"
+        ]:
+            if key in d:
+                kwargs[key] = d[key]
+        # 兼容 log_dir 作为 log_root 的别名
+        if "log_dir" in d and "log_root" not in kwargs:
+            kwargs["log_root"] = d["log_dir"]
+        # 兼容顶层 experiment_name 作为 name
+        if "name" not in kwargs and "experiment_name" in config_dict:
+            kwargs["name"] = config_dict["experiment_name"]
+        return cls(**kwargs)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为 Logger.from_config 可用的扁平字典."""
+        return {
+            "project": self.project,
+            "name": self.name,
+            "log_root": self.log_root,
+            "log_level": self.log_level,
+            "use_wandb": self.use_wandb,
+            "use_tensorboard": self.use_tensorboard,
+            "use_csv": self.use_csv,
+            "console_metrics": self.console_metrics,
+        }
+
+    def to_logging_section(self) -> Dict[str, Any]:
+        """转换为 config 中 logging 节的完整字典 (含 save_interval)."""
+        d = self.to_dict()
+        d["save_interval"] = self.save_interval
+        return d
+
+
+@dataclass
 class DataConfig:
     """
     配置数据层的参数 (取代 Runner 中的硬编码)。
@@ -186,12 +308,11 @@ class GlobalConfig:
         "params": {}
     })
 
-    # 日志配置
-    logging: Dict[str, Any] = field(default_factory=lambda: {
-        "use_wandb": False,
-        "log_dir": "./logs",
-        "save_interval": 10
-    })
+    # 日志配置 (LoggerConfig 取代原 logging 字典)
+    logger_config: LoggerConfig = field(default_factory=LoggerConfig)
+
+    # 攻击配置
+    attack: AttackConfig = field(default_factory=lambda: AttackConfig(enabled=False))
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'GlobalConfig':
@@ -213,8 +334,10 @@ class GlobalConfig:
             instance.model.update(config_dict['model'])
         if 'algorithm' in config_dict:
             instance.algorithm.update(config_dict['algorithm'])
-        if 'logging' in config_dict:
-            instance.logging.update(config_dict['logging'])
+        if 'logging' in config_dict or any(k in config_dict for k in ['use_wandb', 'log_dir', 'log_root', 'log_level']):
+            instance.logger_config = LoggerConfig.from_dict(config_dict)
+        if 'attack' in config_dict:
+            instance.attack = AttackConfig.from_dict(config_dict['attack'])
 
         # 3. 处理扁平化键值对 (直接覆盖深层参数)
         # 这种方式允许用户只写 {"lr": 0.001}
@@ -237,6 +360,8 @@ class GlobalConfig:
                 instance.data.dataset = value
             if key == 'num_clients':
                 instance.data.num_clients = value
+            if key == 'experiment_name':
+                instance.logger_config.name = value
 
         return instance
 
@@ -274,7 +399,16 @@ class GlobalConfig:
             },
             "model": self.model,
             "algorithm": self.algorithm,
-            "logging": self.logging
+            "logging": self.logger_config.to_logging_section(),
+            "attack": {
+                "enabled": self.attack.enabled,
+                "malicious_fraction": self.attack.malicious_fraction,
+                "per_round_fraction": self.attack.per_round_fraction,
+                "strategies": [
+                    {"name": s.name, "fraction": s.fraction, "params": s.params}
+                    for s in self.attack.strategies
+                ]
+            }
         }
 
     @property
