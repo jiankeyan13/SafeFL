@@ -4,30 +4,18 @@ from typing import Optional, Dict, Any, List
 
 @dataclass
 class TrainerConfig:
-    """
-    配置模型训练的参数 (取代硬编码和魔法数字)。
-    提供默认值，避免“配置地狱”。
-    """
-    # 优化器配置
-    optimizer_name: str = "SGD"
-    lr: float = 0.01
-    momentum: float = 0.9
-    weight_decay: float = 5e-4
-    
-    # 损失函数配置
-    criterion_name: str = "CrossEntropyLoss"
-    
-    # 训练流程控制
-    epochs: int = 1
-    batch_size: int = 32
-    num_workers: int = 0
-    
-    # 梯度裁剪 (为 None 则不裁剪)
-    grad_clip_norm: Optional[float] = 5.0
-    
-    # 其他可能的参数字典，作为扩展口
-    extra_params: Dict[str, Any] = field(default_factory=dict)
-    
+    """配置模型训练的参数"""
+    optimizer_name: str = "SGD"             # 优化器名称
+    lr: float = 0.01                        # 学习率
+    momentum: float = 0.9                   # 动量
+    weight_decay: float = 5e-4              # 权重衰减
+    criterion_name: str = "CrossEntropyLoss" # 损失函数名称
+    epochs: int = 2                         # 本地训练轮数
+    batch_size: int = 32                    # 训练批次大小
+    num_workers: int = 0                    # 数据加载线程数
+    grad_clip_norm: Optional[float] = 5.0   # 梯度裁剪阈值
+    extra_params: Dict[str, Any] = field(default_factory=dict) # 额外参数
+
     def build_optimizer(self, model: torch.nn.Module) -> torch.optim.Optimizer:
         """根据配置动态实例化优化器"""
         kwargs = {}
@@ -36,9 +24,7 @@ class TrainerConfig:
         elif self.optimizer_name == 'Adam' or self.optimizer_name == 'AdamW':
             kwargs = {'lr': self.lr, 'weight_decay': self.weight_decay}
             
-        # 允许扩展参数覆盖
         kwargs.update(self.extra_params.get('optimizer_kwargs', {}))
-        
         optimizer_class = getattr(torch.optim, self.optimizer_name)
         return optimizer_class(model.parameters(), **kwargs)
         
@@ -50,31 +36,25 @@ class TrainerConfig:
 
 @dataclass
 class ClientConfig:
-    """
-    配置客户端运行的基础参数。
-    """
-    bn_calib_batches: int = 5
-    num_workers: int = 0
-    batch_size: int = 32
-
-    trainer_config: TrainerConfig = field(default_factory=TrainerConfig)
+    """配置客户端运行的基础参数"""
+    bn_calib_batches: int = 5               # BN校准批次数
+    num_workers: int = 0                    # 数据加载线程数
+    batch_size: int = 32                    # 批次大小
+    trainer_config: TrainerConfig = field(default_factory=TrainerConfig) # 训练配置
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'ClientConfig':
-        """从字典解析配置，方便向下兼容旧的 Dict 传参"""
-        # 提取 trainer 相关的配置
+        """从字典解析配置"""
         trainer_kwargs = {}
         for key in ['lr', 'momentum', 'weight_decay', 'optimizer_name', 'criterion_name', 'epochs', 'grad_clip_norm']:
             if key in config_dict:
                 trainer_kwargs[key] = config_dict[key]
 
-        # trainer 中也有 batch_size 和 num_workers
         for key in ['batch_size', 'num_workers']:
             if key in config_dict:
                 trainer_kwargs[key] = config_dict[key]
 
         trainer_cfg = TrainerConfig(**trainer_kwargs)
-
         client_kwargs = {'trainer_config': trainer_cfg}
         for key in ['bn_calib_batches', 'num_workers', 'batch_size']:
             if key in config_dict:
@@ -82,44 +62,87 @@ class ClientConfig:
 
         return cls(**client_kwargs)
 
+@dataclass
+class LRScheduleConfig:
+    """学习率调度配置 (warmup + cosine)"""
+    enabled: bool = True                    # 是否启用
+    name: str = "warmup_cosine"             # 调度类型, 目前仅支持 warmup_cosine
+    warmup_ratio: float = 0.1               # warmup 占 total_rounds 的比例
+    min_lr: float = 0.0                     # cosine 衰减到的最小 lr
+    warmup_start_lr: float = 0.0            # warmup 起始 lr
+
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'LRScheduleConfig':
+        """从字典解析配置"""
+        if not config_dict:
+            return cls()
+        return cls(
+            enabled=config_dict.get("enabled", True),
+            name=config_dict.get("name", "warmup_cosine"),
+            warmup_ratio=config_dict.get("warmup_ratio", 0.1),
+            min_lr=config_dict.get("min_lr", 0.0),
+            warmup_start_lr=config_dict.get("warmup_start_lr", 0.0),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式"""
+        return {
+            "enabled": self.enabled,
+            "name": self.name,
+            "warmup_ratio": self.warmup_ratio,
+            "min_lr": self.min_lr,
+            "warmup_start_lr": self.warmup_start_lr,
+        }
+
 
 @dataclass
 class TrainingConfig:
-    """
-    配置联邦学习训练流程的全局参数 (取代 Runner 中的硬编码)。
-    """
-    rounds: int = 100
-    clients_fraction: float = 0.2
-    eval_interval: int = 5
-    local_eval_ratio: float = 0.2
-    seed: int = 42
+    """配置联邦学习训练流程的全局参数"""
+    num_clients: int = 100                   # 总客户端数量
+    rounds: int = 50                        # 总训练轮数
+    clients_fraction: float = 0.2           # 每轮参与训练的客户端比例
+    eval_interval: int = 5                  # 评估间隔轮数
+    local_eval_ratio: float = 0.2           # 本地评估抽样比例
+    seed: int = 42                          # 随机种子
+    lr_schedule: LRScheduleConfig = field(default_factory=LRScheduleConfig) # 学习率调度
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'TrainingConfig':
         """从字典解析配置"""
         kwargs = {}
-        for key in ['rounds', 'clients_fraction', 'eval_interval', 'local_eval_ratio', 'seed']:
+        for key in ['num_clients', 'rounds', 'clients_fraction', 'eval_interval', 'local_eval_ratio', 'seed']:
             if key in config_dict:
                 kwargs[key] = config_dict[key]
+        if 'lr_schedule' in config_dict:
+            kwargs['lr_schedule'] = LRScheduleConfig.from_dict(config_dict['lr_schedule'])
         return cls(**kwargs)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式 (供 Runner 使用)"""
+        return {
+            "num_clients": self.num_clients,
+            "rounds": self.rounds,
+            "clients_fraction": self.clients_fraction,
+            "eval_interval": self.eval_interval,
+            "local_eval_ratio": self.local_eval_ratio,
+            "seed": self.seed,
+            "lr_schedule": self.lr_schedule.to_dict(),
+        }
 
 @dataclass
 class PartitionerConfig:
-    """
-    配置数据划分器的参数。
-    """
-    name: str = "dirichlet"  # "iid", "dirichlet" 等
-    params: Dict[str, Any] = field(default_factory=dict)
+    """配置数据划分器的参数"""
+    name: str = "dirichlet"                 # 划分器名称
+    params: Dict[str, Any] = field(default_factory=dict) # 划分参数
 
     @property
     def alpha(self) -> float:
-        """Dirichlet 划分的 alpha 参数 (默认 1.0)"""
+        """Dirichlet 划分的 alpha 参数"""
         return self.params.get("alpha", 1.0)
 
     @property
     def max_retries(self) -> int:
-        """Dirichlet 划分的最大重试次数 (默认 100)"""
+        """Dirichlet 划分的最大重试次数"""
         return self.params.get("max_retries", 100)
 
     @classmethod
@@ -132,15 +155,12 @@ class PartitionerConfig:
             params=config_dict.get("params", {})
         )
 
-
 @dataclass
 class AttackStrategyConfig:
-    """
-    单个攻击策略的配置。
-    """
-    name: str = "badnets"
-    fraction: float = 1.0  # 占所有恶意客户端的比例
-    params: Dict[str, Any] = field(default_factory=dict)
+    """单个攻击策略的配置"""
+    name: str = "badnets"                   # 攻击名称
+    fraction: float = 1.0                   # 占所有恶意客户端的比例
+    params: Dict[str, Any] = field(default_factory=dict) # 攻击参数
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'AttackStrategyConfig':
@@ -153,18 +173,15 @@ class AttackStrategyConfig:
             params=config_dict.get("params", {})
         )
 
-
 @dataclass
 class AttackConfig:
-    """
-    攻击全局配置。
-    """
-    enabled: bool = False
-    malicious_fraction: float = 0.2  # 恶意客户端占总客户端的比例
-    per_round_fraction: float = 0.2   # 每轮选中者中恶意客户端的比例
+    """攻击全局配置"""
+    enabled: bool = False                   # 是否启用攻击
+    malicious_fraction: float = 0.2         # 恶意客户端占总客户端的比例
+    per_round_fraction: float = 0.2         # 每轮选中者中恶意客户端的比例
     strategies: List[AttackStrategyConfig] = field(
         default_factory=lambda: [AttackStrategyConfig()]
-    )
+    ) # 攻击策略列表
 
     def __post_init__(self) -> None:
         if self.enabled:
@@ -195,29 +212,24 @@ class AttackConfig:
             strategies=strategies
         )
 
-
 @dataclass
 class LoggerConfig:
-    """
-    配置 Logger 的参数 (取代 Logger 构造时的硬编码默认值).
-    与 core.utils.logger.Logger 的 from_config 参数一一对应.
-    """
-    project: str = "FL_Project"
-    name: str = "experiment"
-    log_root: str = "./logs"
-    log_level: str = "INFO"
-    use_wandb: bool = False
-    use_tensorboard: bool = False
-    use_csv: bool = False
-    console_metrics: bool = True
-    save_interval: int = 10  # 检查点保存间隔 (轮次)
+    """配置 Logger 的参数"""
+    project: str = "FL_Project"             # 项目名称
+    name: str = "experiment"                # 实验名称
+    log_root: str = "./logs"                # 日志根目录
+    log_level: str = "INFO"                 # 日志级别
+    use_wandb: bool = False                 # 是否使用 wandb
+    use_tensorboard: bool = False           # 是否使用 tensorboard
+    use_csv: bool = False                   # 是否使用 csv
+    console_metrics: bool = False           # 是否在控制台显示指标
+    save_interval: int = 10                 # 检查点保存间隔轮数
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "LoggerConfig":
-        """从字典解析配置, 支持 logging 嵌套或扁平键."""
+        """从字典解析配置"""
         if not config_dict:
             return cls()
-        # 优先从 logging 嵌套中解析
         logging_section = config_dict.get("logging")
         d = logging_section if isinstance(logging_section, dict) else config_dict
         kwargs = {}
@@ -227,16 +239,14 @@ class LoggerConfig:
         ]:
             if key in d:
                 kwargs[key] = d[key]
-        # 兼容 log_dir 作为 log_root 的别名
         if "log_dir" in d and "log_root" not in kwargs:
             kwargs["log_root"] = d["log_dir"]
-        # 兼容顶层 experiment_name 作为 name
         if "name" not in kwargs and "experiment_name" in config_dict:
             kwargs["name"] = config_dict["experiment_name"]
         return cls(**kwargs)
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为 Logger.from_config 可用的扁平字典."""
+        """转换为字典格式"""
         return {
             "project": self.project,
             "name": self.name,
@@ -249,81 +259,64 @@ class LoggerConfig:
         }
 
     def to_logging_section(self) -> Dict[str, Any]:
-        """转换为 config 中 logging 节的完整字典 (含 save_interval)."""
+        """转换为 logging 节字典"""
         d = self.to_dict()
         d["save_interval"] = self.save_interval
         return d
 
-
 @dataclass
 class DataConfig:
-    """
-    配置数据层的参数 (取代 Runner 中的硬编码)。
-    """
-    dataset: str = "cifar10"
-    root: str = "./data_source"
-    num_clients: int = 20
-    val_ratio: float = 0.1
-
-    partitioner: PartitionerConfig = field(default_factory=PartitionerConfig)
+    """配置数据层的参数"""
+    dataset: str = "cifar10"                # 数据集名称
+    root: str = "./data_source"             # 数据存储路径
+    val_ratio: float = 0.1                  # 验证集比例
+    partitioner: PartitionerConfig = field(default_factory=PartitionerConfig) # 划分器配置
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'DataConfig':
-        """从 YAML 的 data: 节解析配置"""
+        """从字典解析配置"""
         kwargs = {}
-        for key in ['dataset', 'root', 'num_clients', 'val_ratio']:
+        for key in ['dataset', 'root', 'val_ratio']:
             if key in config_dict:
                 kwargs[key] = config_dict[key]
 
-        # 解析 partitioner 配置
         if 'partitioner' in config_dict:
             kwargs['partitioner'] = PartitionerConfig.from_dict(config_dict['partitioner'])
 
         return cls(**kwargs)
 
-
 @dataclass
 class GlobalConfig:
-    """
-    全局配置聚合类。
-    支持从扁平化字典或嵌套字典中解析配置，并提供完整的默认值。
-    """
-    experiment_name: str = "fedavg_cifar10_demo"
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    seed: int = 42
-
-    data: DataConfig = field(default_factory=DataConfig)
-    training: TrainingConfig = field(default_factory=TrainingConfig)
-    client: ClientConfig = field(default_factory=ClientConfig)
-    
-    # 模型配置 (暂不使用 dataclass，保持灵活性)
+    """全局配置聚合类"""
+    experiment_name: str = "fedavg_cifar10_demo" # 实验名称
+    device: str = "cuda" if torch.cuda.is_available() else "cpu" # 运行设备
+    seed: int = 42                          # 全局随机种子, 会覆盖所有子配置中的 seed
+    data: DataConfig = field(default_factory=DataConfig) # 数据配置
+    training: TrainingConfig = field(default_factory=TrainingConfig) # 训练配置
+    client: ClientConfig = field(default_factory=ClientConfig) # 客户端配置
     model: Dict[str, Any] = field(default_factory=lambda: {
         "name": "resnet18",
         "params": {"num_classes": 10, "input_channels": 3}
-    })
-    
-    # 算法配置
+    }) # 模型配置
     algorithm: Dict[str, Any] = field(default_factory=lambda: {
         "name": "fedavg",
         "params": {}
-    })
+    }) # 算法配置
+    logger_config: LoggerConfig = field(default_factory=LoggerConfig) # 日志配置
+    attack: AttackConfig = field(default_factory=lambda: AttackConfig(enabled=False)) # 攻击配置
 
-    # 日志配置 (LoggerConfig 取代原 logging 字典)
-    logger_config: LoggerConfig = field(default_factory=LoggerConfig)
+    def __post_init__(self) -> None:
+        self._sync_seed()
 
-    # 攻击配置
-    attack: AttackConfig = field(default_factory=lambda: AttackConfig(enabled=False))
+    def _sync_seed(self) -> None:
+        """将全局 seed 传播到所有子配置, 确保全局 seed 具有最高优先级"""
+        self.training.seed = self.seed
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'GlobalConfig':
-        """
-        从字典解析配置。支持扁平化覆盖。
-        例如：GlobalConfig.from_dict({"lr": 0.001}) 会修改 client.trainer_config.lr
-        """
-        # 1. 先创建默认实例
+        """从字典解析配置"""
         instance = cls()
 
-        # 2. 处理嵌套字典 (向下兼容)
         if 'data' in config_dict:
             instance.data = DataConfig.from_dict(config_dict['data'])
         if 'training' in config_dict:
@@ -339,14 +332,10 @@ class GlobalConfig:
         if 'attack' in config_dict:
             instance.attack = AttackConfig.from_dict(config_dict['attack'])
 
-        # 3. 处理扁平化键值对 (直接覆盖深层参数)
-        # 这种方式允许用户只写 {"lr": 0.001}
         for key, value in config_dict.items():
-            # 基础属性
             if key in ['experiment_name', 'device', 'seed']:
                 setattr(instance, key, value)
             
-            # 快捷映射 (可以根据需要增加更多)
             if key == 'lr':
                 instance.client.trainer_config.lr = value
             if key == 'epochs':
@@ -359,14 +348,16 @@ class GlobalConfig:
             if key == 'dataset':
                 instance.data.dataset = value
             if key == 'num_clients':
-                instance.data.num_clients = value
+                instance.training.num_clients = value
             if key == 'experiment_name':
                 instance.logger_config.name = value
 
+        # 全局 seed 具有最高优先级, 最终覆盖所有子配置中的 seed
+        instance._sync_seed()
         return instance
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为 Runner 需要的原始字典格式 (向下兼容)"""
+        """转换为字典格式"""
         return {
             "experiment_name": self.experiment_name,
             "device": self.device,
@@ -374,20 +365,14 @@ class GlobalConfig:
             "data": {
                 "dataset": self.data.dataset,
                 "root": self.data.root,
-                "num_clients": self.data.num_clients,
+                "num_clients": self.training.num_clients,
                 "val_ratio": self.data.val_ratio,
                 "partitioner": {
                     "name": self.data.partitioner.name,
                     "params": self.data.partitioner.params
                 }
             },
-            "training": {
-                "rounds": self.training.rounds,
-                "clients_fraction": self.training.clients_fraction,
-                "eval_interval": self.training_config.eval_interval, # 修正：TrainingConfig 内部属性
-                "local_eval_ratio": self.training.local_eval_ratio,
-                "seed": self.seed
-            },
+            "training": self.training.to_dict(),
             "client": {
                 "lr": self.client.trainer_config.lr,
                 "momentum": self.client.trainer_config.momentum,

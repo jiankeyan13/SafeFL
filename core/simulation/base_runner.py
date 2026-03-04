@@ -15,6 +15,7 @@ from core.utils.logger import Logger
 from core.utils.evaluator import Accuracy, AverageLoss, Evaluator
 from core.utils.registry import ALGORITHM_REGISTRY, MODEL_REGISTRY
 from core.utils.configs import ClientConfig, TrainingConfig, DataConfig, GlobalConfig
+from core.utils.lr_schedule import get_lr_from_schedule
 from core.client.base_client import BaseClient
 from core.server.base_server import BaseServer
 from data.constants import OWNER_SERVER, SPLIT_PROXY, SPLIT_TEST_GLOBAL
@@ -91,7 +92,7 @@ class BaseRunner:
             dataset_name=self.data_config.dataset,
             root=self.data_config.root,
             partitioner=partitioner,
-            num_clients=self.data_config.num_clients,
+            num_clients=self.training_config.num_clients,
             val_ratio=self.data_config.val_ratio,
             seed=self.seed,
         )
@@ -107,9 +108,12 @@ class BaseRunner:
         """通过 ALGORITHM_REGISTRY 构建 (server, client_class), 并列举客户端 ID."""
         algo_conf = self.config["algorithm"]
         self.server, self.client_class = ALGORITHM_REGISTRY.build(
-            algo_conf["name"], model=self.model_fn(), device=self.device,
-            dataset_store=self.dataset_stores,
-            config=self.config, seed=self.seed, **algo_conf.get("params", {}),
+            algo_conf["name"],
+            model=self.model_fn(),
+            device=self.device,
+            config=self.config,
+            seed=self.seed,
+            **algo_conf.get("params", {}),
         )
         self.client_ids = self.task_set.list_client_ids(exclude_server=True)
 
@@ -167,13 +171,14 @@ class BaseRunner:
                 server_payloads = self.server.broadcast(selected_ids)
 
                 # 3. 本地训练
-                updates = self._run_local_training(selected_ids, server_payloads)
+                updates, round_lr = self._run_local_training(selected_ids, server_payloads, round_idx)
 
                 # 4. 服务端聚合
                 self.server.step(updates, proxy_loader=self.proxy_loader)
 
                 # 5. 训练指标汇总并记录
                 train_metrics = self._aggregate_train_metrics(updates)
+                train_metrics["train/lr"] = round_lr
                 self.logger.log_metrics(train_metrics, step=round_idx)
 
                 # 6. 全局评估（每轮）
@@ -194,17 +199,6 @@ class BaseRunner:
             self.logger.close()
 
     def _create_client(self, cid: str, round_config: ClientConfig) -> BaseClient:
-        """
-        构造单个客户端实例.
-
-        子类可重写以注入攻击策略:
-        ```python
-        def _create_client(self, cid, round_config):
-            client = super()._create_client(cid, round_config)
-            client.attack_profile = self.attack_manager.get_strategy(cid)
-            return client
-        ```
-        """
         return self.client_class(
             client_id=cid, task_set=self.task_set, stores=self.dataset_stores,
             model=self.model_fn(), device=self.device, config=round_config,
@@ -212,10 +206,20 @@ class BaseRunner:
         )
 
     def _run_local_training(
-        self, selected_ids: List[str], server_payloads: Dict[str, Any],
+        self, selected_ids: List[str], server_payloads: Dict[str, Any], round_idx: int,
     ) -> List[Dict[str, Any]]:
         """遍历选中客户端, 调用 client.step() 完成本地训练."""
         client_config = ClientConfig.from_dict(self.config.get("client", {}))
+        training_conf = self.config["training"]
+        total_rounds = training_conf["rounds"]
+        schedule_cfg = training_conf.get("lr_schedule", {})
+
+        lr = get_lr_from_schedule(
+            schedule_cfg, base_lr=client_config.trainer_config.lr,
+            round_idx=round_idx, total_rounds=total_rounds,
+        )
+        client_config.trainer_config.lr = lr
+
         updates: List[Dict[str, Any]] = []
 
         for cid in selected_ids:
@@ -224,7 +228,7 @@ class BaseRunner:
             updates.append(payload)
             del client
 
-        return updates
+        return updates, lr
 
     def _select_clients(self, round_idx: int) -> List[str]:
         """从全量客户端中随机选取本轮参与者, 委托给 server.select_clients."""
@@ -313,6 +317,7 @@ class BaseRunner:
         torch.cuda.manual_seed_all(seed)
         os.environ["PYTHONHASHSEED"] = str(seed)
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-        torch.use_deterministic_algorithms(True)
+        # 确定性慢开关 - 开启将准确复现结果, 但会降低性能
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
+        torch.use_deterministic_algorithms(False)

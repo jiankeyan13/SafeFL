@@ -66,8 +66,9 @@ class BaseServer:
     def broadcast(self, selected_clients: List[str]) -> Dict[str, Dict[str, torch.Tensor]]:
         """
         向选中的客户端分发模型。
+        S1 优化: 直接分发 GPU 上的 state_dict, 避免 CPU 搬运; load_state_dict 会执行数值拷贝.
         """
-        global_weights = {k: v.cpu().clone() for k, v in self.global_model.state_dict().items()}
+        global_weights = self.global_model.state_dict()
 
         package = {client_id: global_weights for client_id in selected_clients}
         

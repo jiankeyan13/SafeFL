@@ -8,27 +8,22 @@ from core.server.screener.krum import KrumScreener
 from core.utils.registry import ALGORITHM_REGISTRY
 
 @ALGORITHM_REGISTRY.register("multi_krum")
-def build_multi_krum_algorithm(model, device, dataset_store, config, **kwargs) -> Tuple[BaseServer, Type[BaseClient]]:
+def build_multi_krum_algorithm(
+    model, device, config: dict, seed: int, **params
+) -> Tuple[BaseServer, Type[BaseClient]]:
     """
-    Multi-Krum 聚合算法：先用 Krum 筛选，再用 FedAvg 聚合。
-    
+    Multi-Krum 聚合算法: 先用 Krum 筛选, 再用 FedAvg 聚合.
+
     Returns:
         (server_instance, client_class)
-        返回 server 实例 and client 类 -> 不能在此创建 client 对象
+        返回 server 实例和 client 类, 不能在此创建 client 对象.
     """
-    server_conf = config.get('server', {})
-    seed = kwargs.get('seed', config.get('seed', 42))
-    screener_conf = server_conf.get('screener', {})
-    
-    # 从配置中读取 Krum 参数
-    screener_params = screener_conf.get('params', {})
-    f = screener_params.get('f', 0)  # 假设的攻击者数量
-    m = screener_params.get('m', 1)  # Multi-Krum 保留的客户端数量
-    
-    # 构建组件
+    screener_params = params.get("screener", {}).get("params", params.get("screener", {}))
+    f = screener_params.get("f", 0)
+    m = screener_params.get("m", 1)
     screener = KrumScreener(f=f, m=m)
     aggregator = AvgAggregator()
-    refiner = BaseRefiner()
+    refiner = BaseRefiner(config=params.get("refiner", {}))
 
     server = BaseServer(
         model=model,

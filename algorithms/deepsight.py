@@ -17,18 +17,17 @@ from core.utils.registry import ALGORITHM_REGISTRY
 """
 
 @ALGORITHM_REGISTRY.register("deepsight")
-def build_deepsight_algorithm(model, device, dataset_store, config, **kwargs) -> Tuple[BaseServer, Type[BaseClient]]:
+def build_deepsight_algorithm(
+    model, device, config: dict, seed: int, **params
+) -> Tuple[BaseServer, Type[BaseClient]]:
     """
-    DeepSight 组装：使用 DeepSightScreener + FlameAggregator。
-    返回 server 实例 and client 类（不在此创建 client 对象）。
+    DeepSight 组装: 使用 DeepSightScreener + FlameAggregator.
+    返回 server 实例和 client 类 (不在此创建 client 对象).
     """
-    server_conf = config.get("server", {})
-    seed = kwargs.get("seed", config.get("seed", 42))
-
-    screener = DeepSightScreener(**server_conf.get("screener", {})) \
-        if server_conf.get("screener", {}) is not None else DeepSightScreener()
-    aggregator = FlameAggregator(device=device, **server_conf.get("aggregator", {}))
-    refiner = BaseRefiner()
+    screener_conf = params.get("screener", {})
+    screener = DeepSightScreener(**screener_conf) if screener_conf else DeepSightScreener()
+    aggregator = FlameAggregator(device=device, **params.get("aggregator", {}))
+    refiner = BaseRefiner(config=params.get("refiner", {}))
 
     server = BaseServer(
         model=model,

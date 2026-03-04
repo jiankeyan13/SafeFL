@@ -88,7 +88,11 @@ class BaseClient:
         ds = self._build_dataset(SPLIT_TRAIN)
         if ds is None:
             raise RuntimeError(f"Client {self.owner_id} has no training data.")
-        return DataLoader(ds, batch_size=self.config.batch_size, shuffle=True, drop_last=False)
+        return DataLoader(
+            ds, batch_size=self.config.batch_size, shuffle=True, drop_last=False,
+            num_workers=self.config.num_workers, pin_memory=True,
+            persistent_workers=self.config.num_workers > 0
+        )
 
     def _create_test_dataloader(self) -> Optional[DataLoader]:
         """
@@ -100,7 +104,11 @@ class BaseClient:
         ds = self._build_dataset(SPLIT_TEST)
         if ds is None:
             return None
-        return DataLoader(ds, batch_size=self.config.batch_size, shuffle=False, drop_last=False)
+        return DataLoader(
+            ds, batch_size=self.config.batch_size, shuffle=False, drop_last=False,
+            num_workers=self.config.num_workers, pin_memory=True,
+            persistent_workers=self.config.num_workers > 0
+        )
 
     def receive(self, server_payload: Dict[str, Any]) -> None:
         """
@@ -122,9 +130,10 @@ class BaseClient:
         self.model.train()
 
         # 保存训练前模型状态，用于计算 delta
+        # S2 优化: 保留在 GPU 上 clone, 避免 CPU 搬运
         initial_state = {
-            k: v.cpu().clone() 
-                for k, v in self.model.state_dict().items() if "num_batches_tracked" not in k
+            k: v.clone()
+            for k, v in self.model.state_dict().items() if "num_batches_tracked" not in k
         }
 
         optimizer = self.config.trainer_config.build_optimizer(self.model)
@@ -135,7 +144,7 @@ class BaseClient:
 
         for _ in range(local_epochs):
             for data, target in self.train_loader:
-                data, target = data.to(self.device), target.to(self.device)
+                data, target = data.to(self.device, non_blocking=True), target.to(self.device, non_blocking=True)
 
                 optimizer.zero_grad()
                 output = self.model(data)
@@ -146,10 +155,10 @@ class BaseClient:
                 total_loss += loss_val.item() * target.size(0)
                 total_samples += target.size(0)
 
-        # 计算前后模型变化 delta
+        # 计算前后模型变化 delta (S2 优化: GPU 内直接计算)
         current_state = self.model.state_dict()
         delta = {
-            k: current_state[k].cpu().clone() - initial_state[k]
+            k: current_state[k] - initial_state[k]
             for k in initial_state
             if k in current_state
         }

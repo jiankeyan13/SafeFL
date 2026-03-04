@@ -2,7 +2,7 @@ import os
 from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
 
-from core.utils.data.mmap_dataset import MemoryMappedDataset
+from core.utils.mmap_dataset import MemoryMappedDataset
 from data.dataset_store import DatasetStore
 from data.registry import dataset_registry
 

@@ -11,25 +11,26 @@ from core.utils.registry import ALGORITHM_REGISTRY
 # https://wandb.ai/jiankeyan13-lab/FL-Test?nw=nwuserjiankeyan13xyz
 
 @ALGORITHM_REGISTRY.register("flame")
-def build_flame_algorithm(model, device, dataset_store, config, **kwargs) -> Tuple[BaseServer, Type[BaseClient]]:
+def build_flame_algorithm(
+    model, device, config: dict, seed: int, **params
+) -> Tuple[BaseServer, Type[BaseClient]]:
     """
-    构建 FLAME 算法：HDBSCAN 筛选 + 范数裁剪聚合 + 噪声添加。
-    
+    构建 FLAME 算法: HDBSCAN 筛选 + 范数裁剪聚合 + 噪声添加.
+
     Returns:
         (server_instance, client_class)
     """
-    server_conf = config.get('server', {})
-    seed = kwargs.get('seed', config.get('seed', 42))
-    
-    # 初始化 FLAME 三组件
-    screener_conf = server_conf.get('screener', {})
-    screener = HdbscanScreener(**screener_conf.get('params', {}))
-    
-    aggregator_conf = server_conf.get('aggregator', {})
-    aggregator = FlameAggregator(**aggregator_conf.get('params', {}))
-    
-    refiner_conf = server_conf.get('refiner', {})
-    refiner = NoiseRefiner(**refiner_conf.get('params', {}))
+    screener_conf = params.get("screener", {})
+    screener_params = screener_conf.get("params", screener_conf)
+    screener = HdbscanScreener(**screener_params)
+
+    aggregator_conf = params.get("aggregator", {})
+    aggregator_params = aggregator_conf.get("params", aggregator_conf)
+    aggregator = FlameAggregator(**aggregator_params)
+
+    refiner_conf = params.get("refiner", {})
+    refiner_params = refiner_conf.get("params", refiner_conf)
+    refiner = NoiseRefiner(**refiner_params)
 
     server = BaseServer(
         model=model,
@@ -39,5 +40,4 @@ def build_flame_algorithm(model, device, dataset_store, config, **kwargs) -> Tup
         device=device,
         seed=seed,
     )
-
     return server, BaseClient
