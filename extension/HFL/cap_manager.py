@@ -52,29 +52,11 @@ class CapManager:
             self.capabilities_map = {}
             return
 
-        clients = sorted(all_clients) if self.sort_client_ids else list(all_clients)
+        clients = self._normalize_client_ids(all_clients)
         n = len(clients)
 
         if self.sample_mode == "uniform":
-            m = len(self.p_list)
-            base = n // m
-            remainder = n % m
-
-            allocation: List[float] = []
-            for p in self.p_list:
-                allocation.extend([float(p)] * base)
-
-            if remainder > 0:
-                extra_idx = self.rng.choice(len(self.p_list), size=remainder, replace=False)
-                for idx in extra_idx:
-                    allocation.append(float(self.p_list[idx]))
-
-            # 防御性：长度不足时补齐（理论上不会发生）
-            while len(allocation) < n:
-                allocation.append(float(self.rng.choice(self.p_list)))
-            allocation = allocation[:n]
-
-            allocation = list(self.rng.permutation(allocation))
+            allocation = self._build_uniform_allocation(n, self.p_list)
         else:  # beta
             low, high = sorted(self.p_list[:2])
             allocation = []
@@ -84,6 +66,19 @@ class CapManager:
                 allocation.append(p)
 
         self.capabilities_map = {cid: float(p) for cid, p in zip(clients, allocation)}
+
+    def assign_uniform_capabilities(
+        self, client_ids: List[str], p_list: Optional[List[float]] = None
+    ) -> Dict[str, float]:
+        """对指定客户端子集重新执行 uniform 能力分配."""
+        clients = self._normalize_client_ids(client_ids)
+        if not clients:
+            return {}
+
+        allocation = self._build_uniform_allocation(len(clients), p_list or self.p_list)
+        assigned = {cid: float(p) for cid, p in zip(clients, allocation)}
+        self.capabilities_map.update(assigned)
+        return assigned
 
     # 查询接口
     def get_capability(self, client_id: str) -> float:
@@ -107,6 +102,32 @@ class CapManager:
 
     def get_widths(self, client_ids: List[str]) -> List[float]:
         return [self.get_width(cid) for cid in client_ids]
+
+    def _normalize_client_ids(self, client_ids: List[str]) -> List[str]:
+        return sorted(client_ids) if self.sort_client_ids else list(client_ids)
+
+    def _build_uniform_allocation(self, num_clients: int, p_list: List[float]) -> List[float]:
+        if not isinstance(p_list, (list, tuple)) or len(p_list) == 0:
+            raise ValueError("Uniform capability allocation requires a non-empty p_list.")
+
+        m = len(p_list)
+        base = num_clients // m
+        remainder = num_clients % m
+
+        allocation: List[float] = []
+        for p in p_list:
+            allocation.extend([float(p)] * base)
+
+        if remainder > 0:
+            extra_idx = self.rng.choice(m, size=remainder, replace=False)
+            for idx in extra_idx:
+                allocation.append(float(p_list[idx]))
+
+        while len(allocation) < num_clients:
+            allocation.append(float(self.rng.choice(p_list)))
+
+        allocation = allocation[:num_clients]
+        return list(self.rng.permutation(allocation))
 
     # ------------------------------------------------------------------ #
     # 辅助：总结与状态

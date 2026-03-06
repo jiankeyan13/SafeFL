@@ -6,7 +6,6 @@ from extension.HFL.config import get_default_hfl_config
 # 导入注册表模块 (触发自动注册)
 import models.hetero_resnet
 import data.datasets.cifar10
-import extension.HFL.sub_aggregator  # noqa: F401
 
 
 def main():

@@ -8,6 +8,32 @@ from core.utils.configs import GlobalConfig
 
 
 @dataclass
+class AttackerCapabilityConfig:
+    """Malicious client capability allocation config."""
+
+    enabled: bool = False
+    sample: str = "uniform"
+    p_list: List[float] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "sample": self.sample,
+            "p_list": list(self.p_list),
+        }
+
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> "AttackerCapabilityConfig":
+        if not config_dict:
+            return cls()
+        return cls(
+            enabled=bool(config_dict.get("enabled", False)),
+            sample=config_dict.get("sample", "uniform"),
+            p_list=list(config_dict.get("p_list", [])),
+        )
+
+
+@dataclass
 class HeteroConfig:
     """异构联邦学习的能力分配配置."""
 
@@ -24,12 +50,17 @@ class HeteroConfig:
     """Beta 采样参数 (仅 sample='beta' 时生效)
     """
 
+    attacker: AttackerCapabilityConfig = field(default_factory=AttackerCapabilityConfig)
+    """攻击者能力配置. 启用后, 恶意客户端将按给定 p_list 均匀分配能力值.
+    """
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "sample": self.sample,
             "p_list": self.p_list,
             "alpha": self.alpha,
             "beta": self.beta,
+            "attacker": self.attacker.to_dict(),
         }
 
     @classmethod
@@ -38,12 +69,14 @@ class HeteroConfig:
             return cls()
         return cls(
             sample=config_dict.get("sample", "uniform"),
-            p_list=config_dict.get("p_list", [0.5, 0.75, 1.0]),
+            p_list=config_dict.get("p_list", [0.25, 0.5, 1.0]),
             alpha=float(config_dict.get("alpha", 3.0)),
             beta=float(config_dict.get("beta", 3.0)),
+            attacker=AttackerCapabilityConfig.from_dict(config_dict.get("attacker", {})),
         )
 
 
+@dataclass
 class HFLConfig(GlobalConfig):
     """HFL 异构联邦学习的默认配置, 继承 GlobalConfig 并补充异构相关字段."""
 
@@ -63,7 +96,7 @@ class HFLConfig(GlobalConfig):
         # 注入 HFL 默认 model/algorithm (用户未指定时使用)
         defaults = {
             "model": {"name": "hetero_PreResNet18", "params": {"num_classes": 10, "input_channels": 3}},
-            "algorithm": {"params": {"aggregator": {"name": "sub_avg"}}},
+            "algorithm": {"name": "fedrolex", "params": {"aggregator": {"name": "sub_avg"}}},
         }
         for k, v in defaults.items():
             if k not in config_dict:
