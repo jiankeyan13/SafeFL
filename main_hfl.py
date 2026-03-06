@@ -11,9 +11,11 @@ import extension.HFL.sub_aggregator  # noqa: F401
 
 def main():
     config = get_default_hfl_config(overrides={
-        "experiment_name": "fedrolex_PreResNet18",
-        "project": "FL_Base",
-        "use_wandb": False,
+        "experiment_name": "rolex_02",
+        "logging": {
+            "project": "FL_Base",
+            "use_wandb": True,
+        },
         "dataset": "cifar10",
     })
 

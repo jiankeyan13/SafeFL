@@ -19,6 +19,7 @@ from core.utils.registry import (
 from extension.HFL.cap_manager import CapManager
 from extension.HFL.config import HFLConfig
 from extension.HFL.fedrolex_server import FedrolexServer
+from extension.HFL.hetero_server import HeteroServer
 import extension.HFL.sub_aggregator  # noqa: F401
 
 

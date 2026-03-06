@@ -318,6 +318,9 @@ class BaseRunner:
         os.environ["PYTHONHASHSEED"] = str(seed)
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         # 确定性慢开关 - 开启将准确复现结果, 但会降低性能
+        # torch.backends.cudnn.deterministic = True
+        # torch.backends.cudnn.benchmark = False
+        # torch.use_deterministic_algorithms(True)
         torch.backends.cudnn.deterministic = False
         torch.backends.cudnn.benchmark = True
         torch.use_deterministic_algorithms(False)

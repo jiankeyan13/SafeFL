@@ -133,10 +133,9 @@ class HeteroServer(BaseServer):
 
     def _get_layer_indices(self, num_channels: int, p: float, \
                           layer_key: str, client_id: str) -> List[int]:
-        """随机采样保留通道索引，返回升序列表"""
+        """静态子模型提取：保留前 n_keep 个通道索引"""
         n_keep = max(1, math.ceil(num_channels * p))
-        chosen = np.random.choice(num_channels, n_keep, replace=False)
-        return sorted(chosen.tolist())
+        return list(range(n_keep))
 
     def align_delta(self, client_delta: Dict[str, torch.Tensor], \
                    client_id: str) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
