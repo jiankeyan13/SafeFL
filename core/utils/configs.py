@@ -99,7 +99,7 @@ class LRScheduleConfig:
 class TrainingConfig:
     """配置联邦学习训练流程的全局参数"""
     num_clients: int = 100                   # 总客户端数量
-    rounds: int = 50                        # 总训练轮数
+    rounds: int = 100                        # 总训练轮数
     clients_fraction: float = 0.2           # 每轮参与训练的客户端比例
     eval_interval: int = 5                  # 评估间隔轮数
     local_eval_ratio: float = 0.2           # 本地评估抽样比例
