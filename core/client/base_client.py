@@ -133,7 +133,8 @@ class BaseClient:
         # S2 优化: 保留在 GPU 上 clone, 避免 CPU 搬运
         initial_state = {
             k: v.clone()
-            for k, v in self.model.state_dict().items() if "num_batches_tracked" not in k
+            for k, v in self.model.state_dict().items()
+            if "num_batches_tracked" not in k and not k.endswith("running_mean") and not k.endswith("running_var")
         }
 
         optimizer = self.config.trainer_config.build_optimizer(self.model)
@@ -156,6 +157,7 @@ class BaseClient:
                 total_samples += target.size(0)
 
         # 计算前后模型变化 delta (S2 优化: GPU 内直接计算)
+        # BN running stats 已从 initial_state 排除, 不参与 delta 上传
         current_state = self.model.state_dict()
         delta = {
             k: current_state[k] - initial_state[k]

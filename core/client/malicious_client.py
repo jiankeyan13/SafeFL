@@ -91,10 +91,11 @@ class MaliciousClient(BaseClient):
         self.model.train()
 
         # S2 优化: 保留在 GPU 上 clone, 避免 CPU 搬运
+        # BN running stats 不参与 delta, 由服务端 proxy_loader 校准或保留原值
         initial_state = {
             k: v.clone()
             for k, v in self.model.state_dict().items()
-            if "num_batches_tracked" not in k
+            if "num_batches_tracked" not in k and not k.endswith("running_mean") and not k.endswith("running_var")
         }
         self._last_initial_state = initial_state
 

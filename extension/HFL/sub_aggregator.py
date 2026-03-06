@@ -66,8 +66,8 @@ class SubAvgAggregator(BaseAggregator):
         context = context or {}
         num_clients = len(updates)
         masks = context.get('masks')
+        order_books = context.get('order_books')
 
-        # ===== Step 0: 融合 sample_weights 和 screen_scores =====
         if sample_weights is None:
             sample_weights = [1.0] * num_clients
         if screen_scores is None:
@@ -75,21 +75,22 @@ class SubAvgAggregator(BaseAggregator):
 
         w = [s * sc for s, sc in zip(sample_weights, screen_scores)]
         self._check_inputs(updates, w)
-        
-        # 注意：这里不做全局归一化，因为我们需要逐元素动态归一化
+
         w_t = torch.tensor(w, dtype=torch.float32, device=self.device)
+
+        if order_books is not None and global_model is not None:
+            return self._aggregate_streaming(
+                updates, order_books, w_t, global_model, context
+            )
 
         agg_dlt = {}
         layer_names = updates[0].keys()
 
         for name in layer_names:
-            # ===== Step 1: 堆叠所有客户端的 Delta =====
-            # layer_stack shape: [num_clients, *param_shape]
             dlt_s = torch.stack(
                 [u[name].to(torch.float32) for u in updates]
             ).to(self.device)
 
-            # ===== Step 2: 生成掩码（优先显式掩码）=====
             if masks is not None:
                 msk_s = torch.stack(
                     [m[name].to(torch.float32) for m in masks]
@@ -97,22 +98,61 @@ class SubAvgAggregator(BaseAggregator):
             else:
                 msk_s = (dlt_s != 0).float()
 
-            # ===== Step 3: 计算逐元素的有效权重和（分母）=====
-            # 将权重 tensor 广播到与 layer_stack 相同的形状
             w_shape = [num_clients] + [1] * (dlt_s.dim() - 1)
-            w_view = w_t.view(*w_shape)  # shape: [num_clients, 1, 1, ...]
+            w_view = w_t.view(*w_shape)
 
-            # 有效权重 = 掩码 * 权重，然后沿客户端维度求和
-            # denominator shape: [*param_shape]
             den = torch.sum(msk_s * w_view, dim=0)
-
-            # ===== Step 4: 计算加权 Delta 和（分子）=====
-            # numerator shape: [*param_shape]
             num = torch.sum(dlt_s * w_view, dim=0)
+            agg_dlt[name] = num / (den + self.eps)
 
-            # ===== Step 5: 按位还原（逐元素除法）=====
-            # 对于被剪枝区域: 0 / eps ≈ 0（保持未更新状态）
-            # 对于重叠区域: 得到参与该参数训练的客户端的加权平均值
+        return agg_dlt, context
+
+    def _aggregate_streaming(self,
+                            updates: List[Dict[str, torch.Tensor]],
+                            order_books: List[Dict],
+                            w_t: torch.Tensor,
+                            global_model: torch.nn.Module,
+                            context: Dict[str, Any]) -> Tuple[Dict[str, torch.Tensor], Dict[str, Any]]:
+        """按索引流式累加, 避免 stack 全量 delta/mask 的峰值内存。"""
+        global_state = global_model.state_dict()
+        skip = ("num_batches_tracked", "running_mean", "running_var")
+
+        def _ok(k: str) -> bool:
+            return not any(k.endswith(s) for s in skip)
+
+        layer_names = [k for k in global_state.keys() if _ok(k)]
+        agg_dlt = {}
+        num_clients = len(updates)
+
+        for name in layer_names:
+            ref = global_state[name]
+            num = torch.zeros_like(ref, dtype=torch.float32, device=self.device)
+            den = torch.zeros_like(ref, dtype=torch.float32, device=self.device)
+
+            for i in range(num_clients):
+                w_i = w_t[i].item()
+                delta = updates[i]
+                ob = order_books[i] if i < len(order_books) else {}
+
+                if not ob:
+                    if name in delta:
+                        c = delta[name].float().to(self.device)
+                        num.add_(c, alpha=w_i)
+                        den.add_(torch.ones_like(c, device=self.device), alpha=w_i)
+                elif name in ob and name in delta:
+                    mapping = ob[name]
+                    c = delta[name].float().to(self.device)
+                    if isinstance(mapping, tuple):
+                        t_o, t_i = mapping
+                        t_o = t_o.to(self.device)
+                        t_i = t_i.to(self.device)
+                        num[t_o[:, None], t_i] = num[t_o[:, None], t_i] + c * w_i
+                        den[t_o[:, None], t_i] = den[t_o[:, None], t_i] + w_i
+                    else:
+                        idx = mapping.to(self.device)
+                        num[idx] = num[idx] + c.flatten() * w_i
+                        den[idx] = den[idx] + w_i
+
             agg_dlt[name] = num / (den + self.eps)
 
         return agg_dlt, context
