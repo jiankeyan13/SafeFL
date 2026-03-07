@@ -171,8 +171,8 @@ class HeteroServer(BaseServer):
         def _ok(k: str) -> bool:
             return not any(k.endswith(s) for s in skip)
 
-        dlt = {k: torch.zeros_like(v, dtype=torch.float32, device="cpu") for k, v in global_state.items() if _ok(k)}
-        msk = {k: torch.zeros_like(v, dtype=torch.float32, device="cpu") for k, v in global_state.items() if _ok(k)}
+        dlt = {k: torch.zeros_like(v, dtype=torch.float32, device="cuda") for k, v in global_state.items() if _ok(k)}
+        msk = {k: torch.zeros_like(v, dtype=torch.float32, device="cuda") for k, v in global_state.items() if _ok(k)}
         return dlt, msk
 
     def step(self, updates, proxy_loader=None):

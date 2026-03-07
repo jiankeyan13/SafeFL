@@ -25,7 +25,7 @@ class SubAvgAggregator(BaseAggregator):
         3. 按位还原 (Element-wise Restoration): 分子除以分母得到加权平均
     """
 
-    def __init__(self, device='cpu', eps: float = 1e-10):
+    def __init__(self, device='cuda', eps: float = 1e-10):
         """
         初始化子模型聚合器。
         
