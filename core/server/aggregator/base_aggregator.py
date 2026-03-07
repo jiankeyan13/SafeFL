@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import torch
 
 class BaseAggregator(ABC):
-    def __init__(self, device='cpu'):
+    def __init__(self, device='cuda'):
         self.device = device
 
     @abstractmethod

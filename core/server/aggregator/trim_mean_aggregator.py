@@ -19,7 +19,7 @@ class TrimmedMeanAggregator(BaseAggregator):
     返回聚合后的纯 delta（不含全局模型权重）。
     """
 
-    def __init__(self, trim_ratio: float = 0.1, device='cpu'):
+    def __init__(self, trim_ratio: float = 0.1, device='cuda'):
         """
         Args:
             trim_ratio: 截断比例 (0.0 <= trim_ratio < 0.5)。

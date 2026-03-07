@@ -14,7 +14,7 @@ class FlameAggregator(BaseAggregator):
     返回聚合后的纯 delta（不含全局模型权重）。
     """
     
-    def __init__(self, device='cpu', **kwargs):
+    def __init__(self, device='cuda', **kwargs):
         super().__init__(device)
 
     def aggregate(self, 
