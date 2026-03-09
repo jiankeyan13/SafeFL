@@ -83,7 +83,7 @@ class BaseServer:
             updates: 客户端上传的 payload 列表，每项须包含 'delta' 与 'num_samples'。
             proxy_loader: 可选的代理数据加载器，用于 BN 校准等后处理。
         """
-        context = {}
+        context = {"proxy_loader": proxy_loader}
         num_samples = [up['num_samples'] for up in updates]
         client_deltas = [up['delta'] for up in updates]
         
