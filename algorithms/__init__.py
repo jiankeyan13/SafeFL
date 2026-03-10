@@ -4,3 +4,4 @@ from .flame import build_flame_algorithm
 from .deepsight import build_deepsight_algorithm
 from .fltrust import build_fltrust_algorithm
 from .rflbat import build_rflbat_algorithm
+from .foolsgold import build_foolsgold_algorithm
