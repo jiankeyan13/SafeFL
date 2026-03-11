@@ -1,0 +1,17 @@
+# main_hfl.py - 异构联邦学习 (HFL) DeepSight + FedRoLex
+experiment_name: deepsight_fedrolex
+dataset: cifar10
+
+logging:
+  project: FL_Base
+  use_wandb: true
+
+algorithm:
+  name: deepsight
+
+attack:
+  enabled: true
+
+hetero:
+  attacker:
+    enabled: true

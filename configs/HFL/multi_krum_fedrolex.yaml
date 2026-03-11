@@ -1,0 +1,17 @@
+# main_hfl.py - 异构联邦学习 (HFL) Multi-Krum + FedRoLex
+experiment_name: multi_krum_fedrolex
+dataset: cifar10
+
+logging:
+  project: FL_Base
+  use_wandb: true
+
+algorithm:
+  name: multi_krum
+
+attack:
+  enabled: true
+
+hetero:
+  attacker:
+    enabled: true

@@ -1,0 +1,17 @@
+# main_hfl.py - 异构联邦学习 (HFL) Flame + FedRoLex
+experiment_name: flame_fedrolex
+dataset: cifar10
+
+logging:
+  project: FL_Base
+  use_wandb: true
+
+algorithm:
+  name: flame
+
+attack:
+  enabled: true
+
+hetero:
+  attacker:
+    enabled: true

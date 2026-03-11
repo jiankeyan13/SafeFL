@@ -1,4 +1,5 @@
 # main_hfl.py - 异构联邦学习 (HFL) FedRoLex
+# model/algorithm/hetero 使用 extension/HFL/config.py 默认
 experiment_name: fedrolex
 dataset: cifar10
 
@@ -6,26 +7,9 @@ logging:
   project: FL_Base
   use_wandb: true
 
-# HFL 特有: 使用 hetero_PreResNet18 + fedrolex
-model:
-  name: hetero_PreResNet18
-  params:
-    num_classes: 10
-    input_channels: 3
+attack:
+  enabled: true
 
-algorithm:
-  name: fedrolex
-  params:
-    aggregator:
-      name: sub_avg
-
-# 异构能力分配配置 (HeteroConfig)
 hetero:
-  sample: uniform
-  p_list: [0.25, 0.5, 1.0]
-  alpha: 3.0
-  beta: 3.0
   attacker:
-    enabled: false
-    sample: uniform
-    p_list: []
+    enabled: true
