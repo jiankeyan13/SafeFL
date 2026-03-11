@@ -1,0 +1,80 @@
+# SafeFL 默认配置 (完整 schema 参考)
+# 基于 core.utils.configs.GlobalConfig 及各 main_*.py 中的 config 汇总
+
+experiment_name: fedavg_cifar10_demo
+device: cuda  # 或 cpu, 默认自动检测
+seed: 42
+
+# 数据配置
+dataset: cifar10
+data:
+  dataset: cifar10
+  root: ./data_source
+  val_ratio: 0.1
+  partitioner:
+    name: dirichlet
+    params:
+      alpha: 1.0
+      max_retries: 100
+
+# 训练流程配置
+training:
+  num_clients: 100
+  rounds: 100
+  clients_fraction: 0.2
+  eval_interval: 5
+  local_eval_ratio: 0.2
+  seed: 42
+  lr_schedule:
+    enabled: true
+    name: warmup_cosine
+    warmup_ratio: 0.1
+    min_lr: 0.0
+    warmup_start_lr: 0.0
+
+# 客户端/训练器配置
+client:
+  lr: 0.01
+  momentum: 0.9
+  weight_decay: 0.0005
+  optimizer_name: SGD
+  criterion_name: CrossEntropyLoss
+  epochs: 2
+  batch_size: 32
+  num_workers: 0
+  grad_clip_norm: 5.0
+  bn_calib_batches: 5
+
+# 模型配置
+model:
+  name: resnet18
+  params:
+    num_classes: 10
+    input_channels: 3
+
+# 算法配置
+algorithm:
+  name: fedavg
+  params: {}
+
+# 日志配置 (logging 或顶层 use_wandb/project 等)
+logging:
+  project: FL_Project
+  name: experiment
+  log_root: ./logs
+  log_level: INFO
+  use_wandb: false
+  use_tensorboard: false
+  use_csv: false
+  console_metrics: false
+  save_interval: 10
+
+# 攻击配置
+attack:
+  enabled: false
+  malicious_fraction: 0.2
+  per_round_fraction: 0.2
+  strategies:
+    - name: badnets
+      fraction: 1.0
+      params: {}

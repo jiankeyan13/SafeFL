@@ -1,3 +1,4 @@
+import os
 import torch
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
@@ -399,3 +400,60 @@ class GlobalConfig:
     @property
     def training_config(self) -> TrainingConfig:
         return self.training
+
+
+def load_config_from_yaml(
+    path: str,
+    overrides: Optional[Dict[str, Any]] = None,
+    configs_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    从 YAML 文件加载配置, 支持与 default 合并及 overrides 覆盖.
+
+    Args:
+        path: YAML 文件路径或相对于 configs_dir 的文件名 (如 vanilla/fedavg.yaml)
+        overrides: 运行时覆盖的配置项, 会递归合并
+        configs_dir: configs 目录路径, 默认项目根目录下的 configs
+
+    Returns:
+        完整的配置字典, 可直接传给 Runner(config) 或 HeteroRunner(config)
+    """
+    try:
+        import yaml
+    except ImportError:
+        raise ImportError("加载 YAML 配置需要 PyYAML, 请安装: pip install PyYAML")
+
+    if configs_dir is None:
+        configs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "configs")
+
+    if not os.path.isabs(path) and not os.path.exists(path):
+        full_path = os.path.join(configs_dir, path)
+    else:
+        full_path = path
+
+    with open(full_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
+
+    # 若存在 default.yaml 且当前不是 default, 则先合并 default
+    if "default" not in os.path.basename(full_path).lower():
+        default_path = os.path.join(configs_dir, "default.yaml")
+        if os.path.exists(default_path):
+            with open(default_path, "r", encoding="utf-8") as f:
+                default_cfg = yaml.safe_load(f) or {}
+            config = _deep_merge(default_cfg, config)
+
+    if overrides:
+        config = _deep_merge(config, overrides)
+
+    return config
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """递归合并 override 到 base, override 优先."""
+    result = dict(base)
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result

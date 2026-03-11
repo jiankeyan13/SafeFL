@@ -1,0 +1,19 @@
+# main_vanilla_fltrust.py - FLTrust + BadNets 攻击
+experiment_name: vanilla_fltrust_cifar10_resnet18
+logging:
+  project: FL_Base
+  use_wandb: false
+
+model:
+  name: resnet18
+  params:
+    num_classes: 10
+    input_channels: 3
+
+dataset: cifar10
+
+algorithm:
+  name: fltrust
+
+attack:
+  enabled: true

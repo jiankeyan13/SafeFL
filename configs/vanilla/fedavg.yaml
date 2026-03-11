@@ -1,0 +1,19 @@
+# main_vanilla.py - FedAvg + BadNets 攻击
+experiment_name: vanilla_fedavg_cifar10_resnet18
+logging:
+  project: FL_Base
+  use_wandb: true
+
+model:
+  name: resnet18
+  params:
+    num_classes: 10
+    input_channels: 3
+
+dataset: cifar10
+
+algorithm:
+  name: fedavg
+
+attack:
+  enabled: true
