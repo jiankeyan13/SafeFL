@@ -2,9 +2,9 @@
 # model/algorithm/hetero 使用 extension/HFL/config.py 默认
 experiment_name: fedrolex
 dataset: cifar10
-
+device: cuda:0
 logging:
-  project: FL_Base
+  project: HFL_experiment1
   use_wandb: true
 
 attack:

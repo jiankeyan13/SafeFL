@@ -21,9 +21,15 @@ class HeteroRunner(Runner):
 
     def __init__(self, config: Dict[str, Any] | None = None) -> None:
         config = config or {}
-        full_config = HFLConfig.from_dict(config).to_dict()
+        hfl_config = HFLConfig.from_dict(config)
+        full_config = hfl_config.to_dict()
         super().__init__(full_config)
-        self.config["hetero"] = full_config["hetero"]
+        # 显式确保 self.config 中包含 hetero 键，即使它是默认值
+        if "hetero" not in self.config:
+            self.config["hetero"] = hfl_config.hetero.to_dict()
+        # 同样确保 global_config 包含 hetero 属性
+        if not hasattr(self.global_config, "hetero"):
+            setattr(self.global_config, "hetero", hfl_config.hetero)
 
     def _setup(self) -> None:
         super()._setup()
@@ -84,6 +90,9 @@ class HeteroRunner(Runner):
         return self.model_cls(**self._model_base_params)
 
     def _get_hetero_config(self) -> Dict[str, Any]:
+        if "hetero" not in self.config:
+            # 防御性处理：如果 self.config 仍然没有 hetero，则使用默认值
+            return HFLConfig.from_dict({}).hetero.to_dict()
         return self.config["hetero"]
 
     def _setup_attacker_capabilities(self) -> None:
