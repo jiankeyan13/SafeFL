@@ -24,3 +24,5 @@ data_source/
 
 # --- Mac 系统垃圾文件 ---
 .DS_Store
+.python-version
+.pyproject.toml
