@@ -31,3 +31,7 @@ class FedrolexServer(HeteroServer):
         n_keep = max(1, math.ceil(num_channels * p))
         order = [(layer_sid + ni) % num_channels for ni in range(n_keep)]
         return sorted(order)
+
+    def step(self, updates, proxy_loader=None):
+        """Apply FedRolex updates without BN calibration."""
+        return super().step(updates, proxy_loader=None)

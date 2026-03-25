@@ -40,7 +40,7 @@ class HeteroConfig:
     sample: str = "uniform"
     """采样模式: 'uniform' 均匀配额, 'beta' Beta 分布采样
     """
-    p_list: List[float] = field(default_factory=lambda: [0.125, 0.25, 0.5, 1.0])
+    p_list: List[float] = field(default_factory=lambda: [0.25, 0.5, 0.75, 1.0])
     """能力值列表. uniform 时从该列表均匀分配; beta 时取 [low, high] 作为区间
     """
     alpha: float = 3.0

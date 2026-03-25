@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import random
+from collections import defaultdict
 from functools import partial
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 import torch
 
@@ -113,3 +115,202 @@ class HeteroRunner(Runner):
         self.logger.info(
             f"Attacker capability summary: p_list={list(p_list)}, assignments={malicious_caps}"
         )
+
+    def _group_clients_by_tier(self, client_ids: List[str]) -> Dict[float, List[str]]:
+        tier_map: Dict[float, List[str]] = defaultdict(list)
+        for cid in client_ids:
+            tier = float(self.cap_manager.get_bucketed_capability(cid))
+            tier_map[tier].append(cid)
+        for tier in tier_map:
+            tier_map[tier] = sorted(tier_map[tier])
+        return dict(tier_map)
+
+    @staticmethod
+    def _build_balanced_quota(total_count: int, tiers: List[float]) -> Dict[float, int]:
+        if total_count <= 0 or not tiers:
+            return {tier: 0 for tier in tiers}
+        base = total_count // len(tiers)
+        remainder = total_count % len(tiers)
+        quota = {tier: base for tier in tiers}
+        for tier in tiers[:remainder]:
+            quota[tier] += 1
+        return quota
+
+    @staticmethod
+    def _normalize_quota_total(
+        quota: Dict[float, int], expected_total: int, tiers: List[float]
+    ) -> Dict[float, int]:
+        adjusted = {tier: max(0, int(quota.get(tier, 0))) for tier in tiers}
+        current = sum(adjusted.values())
+        if not tiers:
+            return adjusted
+
+        if current < expected_total:
+            gap = expected_total - current
+            for i in range(gap):
+                tier = tiers[i % len(tiers)]
+                adjusted[tier] += 1
+        elif current > expected_total:
+            overflow = current - expected_total
+            idx = 0
+            reversed_tiers = list(reversed(tiers))
+            while overflow > 0 and idx < overflow + len(reversed_tiers) * 4:
+                tier = reversed_tiers[idx % len(reversed_tiers)]
+                if adjusted[tier] > 0:
+                    adjusted[tier] -= 1
+                    overflow -= 1
+                idx += 1
+        return adjusted
+
+    def _sample_with_tier_quota(
+        self,
+        tiers: List[float],
+        tier_to_ids: Dict[float, List[str]],
+        quota: Dict[float, int],
+        rng: random.Random,
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        pools: Dict[float, List[str]] = {
+            tier: list(sorted(tier_to_ids.get(tier, [])))
+            for tier in tiers
+        }
+        selected_by_tier: Dict[float, List[str]] = {tier: [] for tier in tiers}
+        shortfalls: Dict[float, int] = {}
+
+        for tier in tiers:
+            target = max(0, int(quota.get(tier, 0)))
+            if target == 0:
+                continue
+            available = pools[tier]
+            take = min(target, len(available))
+            if take > 0:
+                picked = rng.sample(available, take)
+                selected_by_tier[tier].extend(picked)
+                picked_set = set(picked)
+                pools[tier] = [cid for cid in available if cid not in picked_set]
+            if take < target:
+                shortfalls[tier] = target - take
+
+        shortfall_total = sum(shortfalls.values())
+        fallback_picks = 0
+        if shortfall_total > 0:
+            fallback_pool: List[Tuple[float, str]] = []
+            for tier in tiers:
+                fallback_pool.extend([(tier, cid) for cid in pools[tier]])
+
+            take_extra = min(shortfall_total, len(fallback_pool))
+            if take_extra > 0:
+                extra = rng.sample(fallback_pool, take_extra)
+                for src_tier, cid in extra:
+                    selected_by_tier[src_tier].append(cid)
+                fallback_picks = take_extra
+
+        selected_ids: List[str] = []
+        selected_count_by_tier: Dict[float, int] = {}
+        for tier in tiers:
+            selected_count_by_tier[tier] = len(selected_by_tier[tier])
+            selected_ids.extend(selected_by_tier[tier])
+
+        details = {
+            "quota_by_tier": {tier: int(quota.get(tier, 0)) for tier in tiers},
+            "selected_by_tier": selected_count_by_tier,
+            "shortfall_by_tier": shortfalls,
+            "fallback_picks": fallback_picks,
+            "unresolved_shortfall": max(0, shortfall_total - fallback_picks),
+        }
+        return selected_ids, details
+
+    def _select_clients(self, round_idx: int) -> List[str]:
+        clients_frac = self.training_config.clients_fraction
+        num_select = max(1, int(len(self.client_ids) * clients_frac))
+        rng = random.Random(self.seed + round_idx)
+
+        all_tier_map = self._group_clients_by_tier(self.client_ids)
+        tiers = sorted(all_tier_map.keys())
+        if not tiers:
+            return []
+
+        malicious_enabled = self.attack_config.enabled and bool(self.malicious_client_ids)
+        if malicious_enabled:
+            malicious_ids = sorted(cid for cid in self.client_ids if cid in self.malicious_client_ids)
+            benign_ids = sorted(cid for cid in self.client_ids if cid not in self.malicious_client_ids)
+
+            target_malicious = int(num_select * self.attack_config.per_round_fraction)
+            if self.attack_config.per_round_fraction > 0 and target_malicious == 0 and malicious_ids:
+                target_malicious = 1
+            num_malicious = max(0, min(target_malicious, len(malicious_ids), num_select))
+
+            malicious_tier_map = self._group_clients_by_tier(malicious_ids)
+            benign_tier_map = self._group_clients_by_tier(benign_ids)
+
+            malicious_quota = self._build_balanced_quota(num_malicious, tiers)
+            selected_malicious, malicious_details = self._sample_with_tier_quota(
+                tiers, malicious_tier_map, malicious_quota, rng
+            )
+
+            total_quota = self._build_balanced_quota(num_select, tiers)
+            benign_target_total = max(0, num_select - len(selected_malicious))
+            benign_quota = {
+                tier: max(0, total_quota[tier] - malicious_details["selected_by_tier"].get(tier, 0))
+                for tier in tiers
+            }
+            benign_quota = self._normalize_quota_total(benign_quota, benign_target_total, tiers)
+            selected_benign, benign_details = self._sample_with_tier_quota(
+                tiers, benign_tier_map, benign_quota, rng
+            )
+
+            selected = selected_malicious + selected_benign
+        else:
+            total_quota = self._build_balanced_quota(num_select, tiers)
+            selected, all_details = self._sample_with_tier_quota(
+                tiers, all_tier_map, total_quota, rng
+            )
+            selected_malicious = []
+            selected_benign = selected
+            malicious_details = {
+                "quota_by_tier": {tier: 0 for tier in tiers},
+                "selected_by_tier": {tier: 0 for tier in tiers},
+                "shortfall_by_tier": {},
+                "fallback_picks": 0,
+                "unresolved_shortfall": 0,
+            }
+            benign_details = all_details
+
+        if len(selected) < num_select:
+            selected_set = set(selected)
+            remaining_pool = sorted([cid for cid in self.client_ids if cid not in selected_set])
+            need = min(num_select - len(selected), len(remaining_pool))
+            if need > 0:
+                selected.extend(rng.sample(remaining_pool, need))
+
+        rng.shuffle(selected)
+
+        selected_set = set(selected)
+        tier_stats: Dict[float, Dict[str, int]] = {}
+        for tier in tiers:
+            tier_members = set(all_tier_map.get(tier, []))
+            selected_in_tier = tier_members & selected_set
+            malicious_in_tier = selected_in_tier & self.malicious_client_ids
+            tier_stats[tier] = {
+                "total": len(selected_in_tier),
+                "malicious": len(malicious_in_tier),
+                "benign": len(selected_in_tier) - len(malicious_in_tier),
+            }
+
+        if malicious_details.get("unresolved_shortfall", 0) > 0 or benign_details.get("unresolved_shortfall", 0) > 0:
+            self.logger.warning(
+                "Tier-balanced sampling had unresolved shortfall. "
+                f"malicious={malicious_details.get('unresolved_shortfall', 0)}, "
+                f"benign={benign_details.get('unresolved_shortfall', 0)}"
+            )
+
+        self.logger.info(
+            "Selected "
+            f"{len(selected)} clients: {selected} "
+            f"(malicious: {len(selected_malicious)}, ids: {sorted(selected_malicious)}) "
+            f"| tier_stats={tier_stats} "
+            f"| malicious_quota={malicious_details.get('quota_by_tier', {})} "
+            f"| benign_quota={benign_details.get('quota_by_tier', {})} "
+            f"| fallback(m={malicious_details.get('fallback_picks', 0)}, "
+            f"b={benign_details.get('fallback_picks', 0)})"
+        )
+        return selected
