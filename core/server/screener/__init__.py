@@ -4,3 +4,4 @@ from .hdbscan import HdbscanScreener
 from .deepsight_screener import DeepSightScreener
 from .rflbat import RFLBATScreener
 from .foolsgold import FoolsGoldScreener
+from .freqfed import FreqFedScreener

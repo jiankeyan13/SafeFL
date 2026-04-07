@@ -12,6 +12,7 @@ tqdm>=4.62.0
 
 # Clustering (FLAME / DeepSight screener)
 hdbscan>=0.8.33
+scipy
 
 # Experiment logging (optional, used in wandb_helper and Logger)
 wandb>=0.15.0

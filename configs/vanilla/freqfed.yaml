@@ -1,0 +1,24 @@
+# main_vanilla_freqfed.py - FreqFed defense + BadNets attack
+experiment_name: vanilla_freqfed_cifar10_resnet18
+logging:
+  project: FL_Base
+  use_wandb: true
+
+model:
+  name: resnet18
+  params:
+    num_classes: 10
+    input_channels: 3
+
+dataset: cifar10
+
+algorithm:
+  name: freqfed
+  params:
+    screener:
+      params:
+        min_samples: 1
+        allow_single_cluster: true
+
+attack:
+  enabled: true

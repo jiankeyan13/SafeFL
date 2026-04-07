@@ -7,6 +7,7 @@ from core.utils.configs import load_config_from_yaml
 import models.hetero_resnet
 import data.datasets.cifar10
 import core.attack
+import algorithms
 
 
 def main():
