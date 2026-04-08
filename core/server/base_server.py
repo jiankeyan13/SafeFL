@@ -81,6 +81,7 @@ class BaseServer:
 
         Args:
             updates: 客户端上传的 payload 列表，每项须包含 'delta' 与 'num_samples'。
+                delta 可与客户端一致地包含 BN 统计量 buffer 的差分。
             proxy_loader: 可选的代理数据加载器，用于 BN 校准等后处理。
         """
         context = {
@@ -113,7 +114,12 @@ class BaseServer:
         for key, value in global_state.items():
             new_state[key] = value.clone()
             if key in aggregated_delta:
-                new_state[key] += aggregated_delta[key].to(device=value.device, dtype=value.dtype)
+                delta_t = aggregated_delta[key].to(device=value.device)
+                # 聚合器内部对 delta 做 float32 加权; 整数型 buffer 需 round 后写回
+                if torch.is_floating_point(value):
+                    new_state[key] = value + delta_t.to(dtype=value.dtype)
+                else:
+                    new_state[key] = value + torch.round(delta_t).to(dtype=value.dtype)
 
         # 阶段4: 精炼（加载模型 + 可选 BN 校准 / 加噪声等）
         self.refiner.process(

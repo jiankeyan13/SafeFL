@@ -90,13 +90,8 @@ class MaliciousClient(BaseClient):
     def train(self) -> Dict[str, Any]:
         self.model.train()
 
-        # S2 优化: 保留在 GPU 上 clone, 避免 CPU 搬运
-        # BN running stats 不参与 delta, 由服务端 proxy_loader 校准或保留原值
-        initial_state = {
-            k: v.clone()
-            for k, v in self.model.state_dict().items()
-            if "num_batches_tracked" not in k and not k.endswith("running_mean") and not k.endswith("running_var")
-        }
+        # S2 优化: 保留在 GPU 上 clone, 避免 CPU 搬运（含 BN 统计量，与 BaseClient 一致）
+        initial_state = {k: v.clone() for k, v in self.model.state_dict().items()}
         self._last_initial_state = initial_state
 
         optimizer = self.config.trainer_config.build_optimizer(self.model)

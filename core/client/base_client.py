@@ -129,13 +129,9 @@ class BaseClient:
         """
         self.model.train()
 
-        # 保存训练前模型状态，用于计算 delta
+        # 保存训练前模型状态，用于计算 delta（含 BN running_mean / running_var / num_batches_tracked）
         # S2 优化: 保留在 GPU 上 clone, 避免 CPU 搬运
-        initial_state = {
-            k: v.clone()
-            for k, v in self.model.state_dict().items()
-            if "num_batches_tracked" not in k and not k.endswith("running_mean") and not k.endswith("running_var")
-        }
+        initial_state = {k: v.clone() for k, v in self.model.state_dict().items()}
 
         optimizer = self.config.trainer_config.build_optimizer(self.model)
         local_epochs = self.config.trainer_config.epochs
@@ -157,7 +153,6 @@ class BaseClient:
                 total_samples += target.size(0)
 
         # 计算前后模型变化 delta (S2 优化: GPU 内直接计算)
-        # BN running stats 已从 initial_state 排除, 不参与 delta 上传
         current_state = self.model.state_dict()
         delta = {
             k: current_state[k] - initial_state[k]
@@ -187,6 +182,7 @@ class BaseClient:
 
         Returns:
             最终 payload 字典(包含 "client_id", "delta", "num_samples")。
+            delta 含可学习参数与 BN 等 buffer 的差分。
         """
         return {
             "client_id": self.owner_id,
