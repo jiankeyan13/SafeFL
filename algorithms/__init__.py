@@ -6,3 +6,4 @@ from .fltrust import build_fltrust_algorithm
 from .rflbat import build_rflbat_algorithm
 from .foolsgold import build_foolsgold_algorithm
 from .freqfed import build_freqfed_algorithm
+from .mars import build_mars_algorithm

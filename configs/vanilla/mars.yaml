@@ -1,0 +1,26 @@
+# main_vanilla_mars.py - MARS + BadNets 攻击
+experiment_name: vanilla_mars_cifar10_resnet18
+logging:
+  project: FL_Base
+  use_wandb: false
+
+model:
+  name: resnet18
+  params:
+    num_classes: 10
+    input_channels: 3
+
+dataset: cifar10
+
+algorithm:
+  name: mars
+  params:
+    screener:
+      top_ratio: 0.05
+      cluster_distance_threshold: 0.03
+      n_clusters: 2
+      bn_eps: 1.0e-5
+      var_clamp_min: 0.0
+
+attack:
+  enabled: true

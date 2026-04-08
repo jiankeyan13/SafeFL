@@ -1,0 +1,8 @@
+[2026-04-08 18:23:43] [INFO] Logger started. Run directory: C:\Users\YanShisan\Desktop\SafeFL\logs_smoke\FL_Base\mars_smoke_test_20260408_182341
+[2026-04-08 18:23:43] [INFO] Device: cpu | Clients: 100
+[2026-04-08 18:23:43] [INFO] Server: BaseServer | Client: BaseClient
+[2026-04-08 18:23:43] [INFO] >>> Start Training
+[2026-04-08 18:23:43] [INFO] --- Round 0 / 0 ---
+[2026-04-08 18:24:22] [INFO] [Global Eval] accuracy: 0.1086 | loss: 2.3313
+[2026-04-08 18:24:22] [INFO] Checkpoint saved -> checkpoint_best.pth (round 0)
+[2026-04-08 18:24:22] [INFO] Training Finished. Best Accuracy: 0.1086
