@@ -4,7 +4,7 @@ from typing import Tuple, Type
 
 import extension.HFL.sub_aggregator  # noqa: F401
 from core.client.base_client import BaseClient
-from core.server.refiner.base_refiner import BaseRefiner
+from extension.HFL.hfl_refiner import HFLRefiner
 from core.server.screener.rflbat import RFLBATScreener
 from core.utils.registry import AGGREGATOR_REGISTRY, ALGORITHM_REGISTRY
 from extension.HFL.cap_manager import CapManager
@@ -20,7 +20,7 @@ def build_rflbat_fedrolex_algorithm(
     screener = RFLBATScreener(seed=seed, **screener_params)
 
     aggregator = AGGREGATOR_REGISTRY.build("sub_avg")
-    refiner = BaseRefiner(config=params.get("refiner", {}))
+    refiner = HFLRefiner(config=params.get("refiner", {}))
 
     server = FedrolexServer(
         model=model,
