@@ -19,6 +19,8 @@ data_source/
 # --- IDE 配置 (每个人用的编辑器不一样，不要上传) ---
 .vscode/
 .idea/
+.claude/
+.cursor/
 
 # --- Mac 系统垃圾文件 ---
 .DS_Store

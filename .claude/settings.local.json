@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -c \"from extension.HFL.hetero_runner import HeteroRunner; print\\('Import OK'\\)\")",
-      "Bash(python -c \"from core.server.refiner.base_refiner import BaseRefiner; print\\('Import OK'\\)\")",
-      "Bash(python -c ':*)"
-    ]
-  }
-}
