@@ -33,11 +33,11 @@ class BaseRefiner:
 
     def calibrate_bn(self, model, loader, device):
         """代理数据BN校准"""
-        # model.train()
-        # if device: 
-        #     model.to(device)
-        # with torch.no_grad():
-        #     for data, _ in loader:
-        #         if device: 
-        #             data = data.to(device)
-        #         model(data)
+        model.train()
+        if device: 
+            model.to(device)
+        with torch.no_grad():
+            for data, _ in loader:
+                if device: 
+                    data = data.to(device)
+                model(data)
