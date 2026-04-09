@@ -15,12 +15,12 @@ class PreActBlock(nn.Module):
 
     def __init__(self, in_planes, planes, stride=1, scale=1.0):
         super().__init__()
-        self.bn1 = nn.BatchNorm2d(in_planes)
+        self.bn1 = nn.BatchNorm2d(in_planes, momentum=None, track_running_stats=False)
         self.conv1 = nn.Conv2d(
             in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
         )
         self.scaler1 = Scaler(scale)
-        self.bn2 = nn.BatchNorm2d(planes)
+        self.bn2 = nn.BatchNorm2d(planes, momentum=None, track_running_stats=False)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
         self.scaler2 = Scaler(scale)
 
@@ -48,13 +48,13 @@ class PreActBottleneck(nn.Module):
 
     def __init__(self, in_planes, planes, stride=1, scale=1.0):
         super().__init__()
-        self.bn1 = nn.BatchNorm2d(in_planes)
+        self.bn1 = nn.BatchNorm2d(in_planes, momentum=None, track_running_stats=False)
         self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
         self.scaler1 = Scaler(scale)
-        self.bn2 = nn.BatchNorm2d(planes)
+        self.bn2 = nn.BatchNorm2d(planes, momentum=None, track_running_stats=False)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
         self.scaler2 = Scaler(scale)
-        self.bn3 = nn.BatchNorm2d(planes)
+        self.bn3 = nn.BatchNorm2d(planes, momentum=None, track_running_stats=False)
         self.conv3 = nn.Conv2d(planes, self.expansion * planes, kernel_size=1, bias=False)
         self.scaler3 = Scaler(scale)
 
@@ -102,7 +102,7 @@ class PreActResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2, scale=scale)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2, scale=scale)
         self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2, scale=scale)
-        self.final_bn = nn.BatchNorm2d(self.in_planes)
+        self.final_bn = nn.BatchNorm2d(self.in_planes, momentum=None, track_running_stats=False)
         self.linear = nn.Linear(_make_width(512, self.width_ratio) * block.expansion, num_classes)
 
     def _make_layer(self, block, planes, num_blocks, stride, scale):
