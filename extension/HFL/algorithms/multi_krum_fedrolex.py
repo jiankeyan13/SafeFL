@@ -5,7 +5,7 @@ from typing import Tuple, Type
 import core.server.screener  # noqa: F401
 import extension.HFL.sub_aggregator  # noqa: F401
 from core.client.base_client import BaseClient
-from core.server.refiner.base_refiner import BaseRefiner
+from extension.HFL.hfl_refiner import HFLRefiner
 from core.utils.registry import AGGREGATOR_REGISTRY, ALGORITHM_REGISTRY, SCREENER_REGISTRY
 from extension.HFL.cap_manager import CapManager
 from extension.HFL.fedrolex_server import FedrolexServer
@@ -34,7 +34,7 @@ def build_multi_krum_fedrolex_algorithm(
 
     screener = SCREENER_REGISTRY.build("krum", f=f, m=m)
     aggregator = AGGREGATOR_REGISTRY.build("sub_avg")
-    refiner = BaseRefiner(config={})
+    refiner = HFLRefiner(config={})
 
     server = FedrolexServer(
         model=model,

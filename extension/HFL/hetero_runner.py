@@ -7,12 +7,14 @@ from functools import partial
 from typing import Any, Dict, List, Tuple
 
 import torch
+from torch.utils.data import ConcatDataset, DataLoader, Subset
 
 from core.client.base_client import BaseClient
 from core.client.malicious_client import MaliciousClient
 from core.simulation.runner import Runner
 from core.utils.configs import ClientConfig
 from core.utils.registry import ALGORITHM_REGISTRY, MODEL_REGISTRY
+from data.constants import SPLIT_TRAIN, train_plain_tag
 from extension.HFL.cap_manager import CapManager
 from extension.HFL.config import HFLConfig
 import extension.HFL.algorithms  # noqa: F401
@@ -36,6 +38,7 @@ class HeteroRunner(Runner):
     def _setup(self) -> None:
         super()._setup()
         self._setup_attacker_capabilities()
+        self._setup_global_proxy_loader()
 
     def _setup_model(self) -> None:
         model_conf = self.config["model"]
@@ -96,6 +99,43 @@ class HeteroRunner(Runner):
             # 防御性处理：如果 self.config 仍然没有 hetero，则使用默认值
             return HFLConfig.from_dict({}).hetero.to_dict()
         return self.config["hetero"]
+
+    def _setup_global_proxy_loader(self) -> None:
+        """
+        用含毒全局训练集替换 proxy_loader，使 BN 校准统计量反映真实训练分布。
+        恶意客户端持有的数据会重放投毒变换，确保统计量包含毒化影响。
+        """
+        dataset_name = self.data_config.dataset
+        tag = train_plain_tag(dataset_name)
+        full_dataset = self.dataset_stores[tag].dataset
+        client_config = ClientConfig.from_dict(self.config.get("client", {}))
+
+        datasets = []
+        for cid in self.client_ids:
+            task = self.task_set.try_get_task(cid, SPLIT_TRAIN)
+            if task is None:
+                continue
+            subset = Subset(full_dataset, task.indices)
+            if cid in self.malicious_client_ids:
+                attack_profile = self.client_attack_map.get(cid)
+                if attack_profile is not None:
+                    subset = attack_profile.poison_dataset(
+                        subset, mode="train",
+                        client_id=cid, round_idx=0,
+                    )
+            datasets.append(subset)
+
+        combined = ConcatDataset(datasets)
+        self.proxy_loader = DataLoader(
+            combined,
+            batch_size=client_config.batch_size,
+            shuffle=True,
+            num_workers=client_config.num_workers,
+        )
+        self.logger.info(
+            f"Global proxy loader rebuilt: {len(combined)} samples "
+            f"(poisoned clients: {sorted(self.malicious_client_ids)})"
+        )
 
     def _setup_attacker_capabilities(self) -> None:
         attacker_conf = self._get_hetero_config().get("attacker", {})

@@ -4,7 +4,7 @@ from typing import Tuple, Type
 
 import extension.HFL.sub_flame_aggregator  # noqa: F401
 from core.client.base_client import BaseClient
-from core.server.refiner.base_refiner import BaseRefiner
+from extension.HFL.hfl_refiner import HFLRefiner
 from core.server.screener.deepsight_screener import DeepSightScreener
 from core.utils.registry import AGGREGATOR_REGISTRY, ALGORITHM_REGISTRY
 from extension.HFL.cap_manager import CapManager
@@ -30,7 +30,7 @@ def build_deepsight_fedrolex_algorithm(
     aggregator_params = aggregator_conf.get("params", aggregator_conf)
     aggregator = AGGREGATOR_REGISTRY.build("sub_flame", device=device, **aggregator_params)
 
-    refiner = BaseRefiner(config=params.get("refiner", {}))
+    refiner = HFLRefiner(config=params.get("refiner", {}))
 
     server = FedrolexServer(
         model=model,

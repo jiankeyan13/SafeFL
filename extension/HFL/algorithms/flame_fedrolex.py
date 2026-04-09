@@ -4,7 +4,7 @@ from typing import Tuple, Type
 
 import extension.HFL.sub_flame_aggregator  # noqa: F401
 from core.client.base_client import BaseClient
-from core.server.refiner.noise_refiner import NoiseRefiner
+from extension.HFL.hfl_refiner import HFLNoiseRefiner
 from core.server.screener.hdbscan import HdbscanScreener
 from core.utils.registry import AGGREGATOR_REGISTRY, ALGORITHM_REGISTRY
 from extension.HFL.cap_manager import CapManager
@@ -33,7 +33,7 @@ def build_flame_fedrolex_algorithm(
 
     refiner_conf = params.get("refiner", {})
     refiner_params = refiner_conf.get("params", refiner_conf)
-    refiner = NoiseRefiner(**refiner_params)
+    refiner = HFLNoiseRefiner(**refiner_params)
 
     server = FedrolexServer(
         model=model,
