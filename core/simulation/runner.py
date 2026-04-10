@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Subset
 from core.attack import build_attack
 from core.client.malicious_client import MaliciousClient
 from core.simulation.base_runner import BaseRunner
-from core.utils.configs import ClientConfig
+from core.utils.configs import ClientConfig, apply_malicious_epochs_override
 from data.constants import OWNER_SERVER, SPLIT_TEST_GLOBAL
 
 
@@ -87,9 +87,12 @@ class Runner(BaseRunner):
     def _create_client(self, cid: str, round_config: ClientConfig):
         if self.attack_config.enabled and cid in self.malicious_client_ids:
             attack_profile = self.client_attack_map.get(cid)
+            rc = apply_malicious_epochs_override(
+                round_config, self.attack_config.malicious_epochs
+            )
             return MaliciousClient(
                 client_id=cid, task_set=self.task_set, stores=self.dataset_stores,
-                model=self.model_fn(), device=self.device, config=round_config,
+                model=self.model_fn(), device=self.device, config=rc,
                 evaluator=self.evaluator, attack_profile=attack_profile,
                 round_idx=self.current_round,
             )

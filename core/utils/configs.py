@@ -1,6 +1,6 @@
 import os
 import torch
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional, Dict, Any, List
 
 @dataclass
@@ -180,6 +180,7 @@ class AttackConfig:
     enabled: bool = False                   # 是否启用攻击
     malicious_fraction: float = 0.2         # 恶意客户端占总客户端的比例
     per_round_fraction: float = 0.2         # 每轮选中者中恶意客户端的比例
+    malicious_epochs: Optional[int] = None  # 恶意客户端本地训练 epoch, None 表示与 client.epochs 一致
     strategies: List[AttackStrategyConfig] = field(
         default_factory=lambda: [AttackStrategyConfig()]
     ) # 攻击策略列表
@@ -206,12 +207,32 @@ class AttackConfig:
         ]
         if not strategies:
             strategies = [AttackStrategyConfig()]
+        malicious_epochs = config_dict.get("malicious_epochs")
+        if malicious_epochs is not None:
+            malicious_epochs = int(malicious_epochs)
         return cls(
             enabled=config_dict.get("enabled", False),
             malicious_fraction=config_dict.get("malicious_fraction", 0.2),
             per_round_fraction=config_dict.get("per_round_fraction", 0.2),
+            malicious_epochs=malicious_epochs,
             strategies=strategies
         )
+
+
+def apply_malicious_epochs_override(
+    client_config: ClientConfig, malicious_epochs: Optional[int]
+) -> ClientConfig:
+    """
+    恶意客户端专用: 若 malicious_epochs 非 None, 返回新 ClientConfig 副本并覆盖 trainer.epochs.
+    避免 Runner 复用同一 round_config 时原地修改污染后续良性客户端.
+    """
+    if malicious_epochs is None:
+        return client_config
+    return replace(
+        client_config,
+        trainer_config=replace(client_config.trainer_config, epochs=int(malicious_epochs)),
+    )
+
 
 @dataclass
 class LoggerConfig:
@@ -390,6 +411,7 @@ class GlobalConfig:
                 "enabled": self.attack.enabled,
                 "malicious_fraction": self.attack.malicious_fraction,
                 "per_round_fraction": self.attack.per_round_fraction,
+                "malicious_epochs": self.attack.malicious_epochs,
                 "strategies": [
                     {"name": s.name, "fraction": s.fraction, "params": s.params}
                     for s in self.attack.strategies

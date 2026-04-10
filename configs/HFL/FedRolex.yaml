@@ -1,13 +1,18 @@
 # main_hfl.py - 异构联邦学习 (HFL) FedRoLex
-# model/algorithm/hetero 使用 extension/HFL/config.py 默认
-experiment_name: fedrolex
+# 实验配置: epoch=2, rounds=150, malicious_epochs=5
+experiment_name: fedrolex_custom
 dataset: cifar10
+epochs: 2
+rounds: 150
+device: cuda:0
+
 logging:
   project: HFL_experiment1
   use_wandb: true
 
 attack:
   enabled: true
+  malicious_epochs: 5
 
 hetero:
   attacker:

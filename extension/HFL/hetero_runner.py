@@ -12,7 +12,7 @@ from torch.utils.data import ConcatDataset, DataLoader, Subset
 from core.client.base_client import BaseClient
 from core.client.malicious_client import MaliciousClient
 from core.simulation.runner import Runner
-from core.utils.configs import ClientConfig
+from core.utils.configs import ClientConfig, apply_malicious_epochs_override
 from core.utils.registry import ALGORITHM_REGISTRY, MODEL_REGISTRY
 from data.constants import SPLIT_TRAIN, train_plain_tag
 from extension.HFL.cap_manager import CapManager
@@ -78,9 +78,12 @@ class HeteroRunner(Runner):
         model = self._build_client_model(cid)
         if self.attack_config.enabled and cid in self.malicious_client_ids:
             attack_profile = self.client_attack_map[cid]
+            rc = apply_malicious_epochs_override(
+                round_config, self.attack_config.malicious_epochs
+            )
             return MaliciousClient(
                 client_id=cid, task_set=self.task_set, stores=self.dataset_stores,
-                model=model, device=self.device, config=round_config, evaluator=self.evaluator,
+                model=model, device=self.device, config=rc, evaluator=self.evaluator,
                 attack_profile=attack_profile, round_idx=self.current_round,
             )
         return self.client_class(
