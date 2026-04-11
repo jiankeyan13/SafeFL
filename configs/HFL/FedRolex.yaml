@@ -4,7 +4,7 @@ experiment_name: fedrolex_custom
 dataset: cifar10
 epochs: 2
 rounds: 150
-device: cuda:0
+device: cuda:6
 
 logging:
   project: HFL_experiment1

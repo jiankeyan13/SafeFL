@@ -1,16 +1,21 @@
 # main_hfl.py - 异构联邦学习 (HFL) DeepSight + FedRoLex
+# 实验配置: epoch=2, rounds=150, malicious_epochs=5
 experiment_name: deepsight_fedrolex
 dataset: cifar10
+epochs: 2
+rounds: 150
+device: cuda:6
 
 logging:
-  project: FL_Base
+  project: HFL_experiment1
   use_wandb: true
 
 algorithm:
-  name: deepsight
+  name: deepsight_fedrolex
 
 attack:
   enabled: true
+  malicious_epochs: 5
 
 hetero:
   attacker:

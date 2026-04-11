@@ -146,21 +146,23 @@ class HeteroServer(BaseServer):
         if not order_book:
             for k, delta in client_delta.items():
                 if k in dlt:
-                    dlt[k] = delta.float().cpu()
+                    dlt[k] = delta.float().to(device=dlt[k].device)
                     msk[k] = torch.ones_like(dlt[k])
             return dlt, msk
 
         for k, mapping in order_book.items():
             if k not in client_delta:
                 continue
-            c = client_delta[k].float().cpu()
+            target_device = dlt[k].device
+            c = client_delta[k].float().to(device=target_device)
             if isinstance(mapping, tuple):
-                t_o, t_i = mapping
+                t_o, t_i = (idx.to(device=target_device) for idx in mapping)
                 dlt[k][t_o[:, None], t_i] = c
                 msk[k][t_o[:, None], t_i] = 1.0
             else:
-                dlt[k][mapping] = c
-                msk[k][mapping] = 1.0
+                index = mapping.to(device=target_device) if torch.is_tensor(mapping) else mapping
+                dlt[k][index] = c
+                msk[k][index] = 1.0
         return dlt, msk
 
     def _init_aligned_delta_and_mask(self) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
@@ -171,8 +173,8 @@ class HeteroServer(BaseServer):
         def _ok(k: str) -> bool:
             return not any(k.endswith(s) for s in skip)
 
-        dlt = {k: torch.zeros_like(v, dtype=torch.float32, device="cuda") for k, v in global_state.items() if _ok(k)}
-        msk = {k: torch.zeros_like(v, dtype=torch.float32, device="cuda") for k, v in global_state.items() if _ok(k)}
+        dlt = {k: torch.zeros_like(v, dtype=torch.float32) for k, v in global_state.items() if _ok(k)}
+        msk = {k: torch.zeros_like(v, dtype=torch.float32) for k, v in global_state.items() if _ok(k)}
         return dlt, msk
 
     def step(self, updates, proxy_loader=None):
