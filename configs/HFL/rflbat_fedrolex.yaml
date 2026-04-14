@@ -1,0 +1,29 @@
+# main_hfl.py - 异构联邦学习 (HFL) RFLBAT + FedRoLex
+# 实验配置: epoch=2, rounds=150, malicious_epochs=5
+experiment_name: rflbat_fedrolex
+dataset: cifar10
+epochs: 2
+rounds: 150
+device: cuda:0
+
+logging:
+  project: HFL_experiment1
+  use_wandb: true
+
+algorithm:
+  name: rflbat_fedrolex
+  params:
+    screener:
+      params:
+        epsilon1: 4.0
+        epsilon2: 2.0
+        num_clusters: 2
+        max_kmeans_iters: 50
+
+attack:
+  enabled: true
+  malicious_epochs: 5
+
+hetero:
+  attacker:
+    enabled: true
