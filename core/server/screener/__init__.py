@@ -6,3 +6,4 @@ from .rflbat import RFLBATScreener
 from .foolsgold import FoolsGoldScreener
 from .freqfed import FreqFedScreener
 from .mars import MARSScreener
+from .alignins import AlignInsScreener

@@ -1,0 +1,28 @@
+# AlignIns defense + BadNets attack
+experiment_name: vanilla_alignins_cifar10_resnet18
+logging:
+  project: FL_Base
+  use_wandb: false
+
+model:
+  name: resnet18
+  params:
+    num_classes: 10
+    input_channels: 3
+
+dataset: cifar10
+
+algorithm:
+  name: alignins
+  params:
+    screener:
+      params:
+        top_ratio: 0.3
+        tda_threshold: 1.0
+        mpsa_threshold: 1.0
+    aggregator:
+      params:
+        eps: 1.0e-12
+
+attack:
+  enabled: true
