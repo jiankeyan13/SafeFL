@@ -33,5 +33,5 @@ class FedrolexServer(HeteroServer):
         return sorted(order)
 
     def step(self, updates, proxy_loader=None):
-        """Apply FedRolex updates without BN calibration."""
-        return super().step(updates, proxy_loader=None)
+        """委托 HeteroServer.step; proxy 传给 screener/refiner (如 FLTrust, BN 校准)."""
+        return super().step(updates, proxy_loader=proxy_loader)

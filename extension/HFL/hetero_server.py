@@ -182,10 +182,13 @@ class HeteroServer(BaseServer):
         if not updates:
             return
 
-        context: Dict[str, Any] = {}
         num_samples = [u["num_samples"] for u in updates]
         sparse_deltas = [u["delta"] for u in updates]
         client_ids = [u["client_id"] for u in updates]
+        context: Dict[str, Any] = {
+            "proxy_loader": proxy_loader,
+            "client_ids": client_ids,
+        }
         order_books = [self._client_orders.get(cid, {}) for cid in client_ids]
 
         needs_dense = type(self.screener).__name__ != "BaseScreener"

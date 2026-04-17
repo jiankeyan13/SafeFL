@@ -1,17 +1,17 @@
-# main_hfl.py - 异构联邦学习 (HFL) Flame + FedRoLex
+# main_hfl.py - 异构联邦学习 (HFL) FreqFed + FedRoLex
 # 实验配置: epoch=2, rounds=150, malicious_epochs=5
-experiment_name: flame_fedrolex
+experiment_name: freqfed_fedrolex
 dataset: cifar10
 epochs: 2
 rounds: 150
-device: cuda:2
+device: cuda:1
 
 logging:
   project: HFL_experiment1
   use_wandb: true
 
 algorithm:
-  name: flame_fedrolex
+  name: freqfed_fedrolex
 
 attack:
   enabled: true

@@ -1,6 +1,6 @@
-# main_hfl.py - 异构联邦学习 (HFL) Flame + FedRoLex
+# main_hfl.py - 异构联邦学习 (HFL) RFLBAT + FedRoLex
 # 实验配置: epoch=2, rounds=150, malicious_epochs=5
-experiment_name: flame_fedrolex
+experiment_name: rflbat_fedrolex
 dataset: cifar10
 epochs: 2
 rounds: 150
@@ -11,7 +11,7 @@ logging:
   use_wandb: true
 
 algorithm:
-  name: flame_fedrolex
+  name: rflbat_fedrolex
 
 attack:
   enabled: true
