@@ -7,4 +7,5 @@ from .rflbat import build_rflbat_algorithm
 from .foolsgold import build_foolsgold_algorithm
 from .freqfed import build_freqfed_algorithm
 from .mars import build_mars_algorithm
+from .mars_normal import build_mars_normal_algorithm
 from .alignins import build_alignins_algorithm

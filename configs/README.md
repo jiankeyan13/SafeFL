@@ -29,6 +29,12 @@ runner = Runner(config)
 runner.run()
 ```
 
+或直接使用非异构入口:
+
+```bash
+python main_vanilla.py configs/vanilla/fedavg.yaml
+```
+
 HFL 使用 `HeteroRunner` 和 `get_default_hfl_config`, 可先加载 YAML 再合并:
 
 ```python
