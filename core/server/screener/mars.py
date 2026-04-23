@@ -139,6 +139,20 @@ class MARSScreener(BaseScreener):
             local_state[key] = local_value
         return local_state
 
+    def _bn_channel_scale(
+        self,
+        bn_weight: torch.Tensor,
+        running_var: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        简化版: 每通道缩放为 |gamma| / std, std = sqrt(running_var + eps),
+        与 Conv 权重相乘后做谱范数, 对应常见 MARS 实现.
+        """
+        sanitized_var = torch.nan_to_num(running_var.detach().float(), nan=0.0).clamp(min=self.var_clamp_min)
+        sanitized_weight = torch.nan_to_num(bn_weight.detach().float(), nan=0.0)
+        std = torch.sqrt(sanitized_var + self.bn_eps)
+        return torch.abs(sanitized_weight / std)
+
     def _extract_cbe(
         self,
         local_state: Dict[str, torch.Tensor],
@@ -160,10 +174,7 @@ class MARSScreener(BaseScreener):
                     dtype=conv_weight.dtype,
                 )
 
-            sanitized_var = torch.nan_to_num(running_var.detach().float(), nan=0.0).clamp(min=self.var_clamp_min)
-            sanitized_weight = torch.nan_to_num(bn_weight.detach().float(), nan=0.0)
-            std = torch.sqrt(sanitized_var + self.bn_eps)
-            scale = torch.abs(sanitized_weight / std)
+            scale = self._bn_channel_scale(bn_weight, running_var)
 
             channel_lips = []
             conv_weight = conv_weight.detach().float()
@@ -225,3 +236,21 @@ class MARSScreener(BaseScreener):
             members = [cbe_vectors[idx] for idx, item in enumerate(labels) if int(item) == int(label)]
             centers[int(label)] = np.mean(np.stack(members, axis=0), axis=0)
         return centers
+
+
+@SCREENER_REGISTRY.register("mars_gamma_bn")
+class MARSGammaBnStatScreener(MARSScreener):
+    """
+    MARS 变体: 每通道缩放为 |gamma| * std, 其中 std = sqrt(running_var + eps).
+    使用 BN 可学习 gamma 与运行统计量(标准差)的乘性组合; 与注册名 "mars" 的 |gamma|/std 除法形式不同.
+    """
+
+    def _bn_channel_scale(
+        self,
+        bn_weight: torch.Tensor,
+        running_var: torch.Tensor,
+    ) -> torch.Tensor:
+        sanitized_var = torch.nan_to_num(running_var.detach().float(), nan=0.0).clamp(min=self.var_clamp_min)
+        sanitized_weight = torch.nan_to_num(bn_weight.detach().float(), nan=0.0)
+        std = torch.sqrt(sanitized_var + self.bn_eps)
+        return torch.abs(sanitized_weight) * std
