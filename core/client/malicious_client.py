@@ -157,5 +157,4 @@ class MaliciousClient(BaseClient):
             "client_id": self.owner_id,
             "delta": final_delta,
             "metrics": train_metrics["train_loss"],
-            "num_samples": len(self.train_loader.dataset),
         }

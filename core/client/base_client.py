@@ -181,14 +181,13 @@ class BaseClient:
         打包客户端想要向上传递的数据集合，用于被服务端的聚合器收集。
 
         Returns:
-            最终 payload 字典(包含 "client_id", "delta", "num_samples")。
+            最终 payload 字典(包含 "client_id", "delta")。
             delta 含可学习参数与 BN 等 buffer 的差分。
         """
         return {
             "client_id": self.owner_id,
             "delta": train_metrics["delta"],
             "metrics": train_metrics["train_loss"],
-            "num_samples": len(self.train_loader.dataset),
         }
 
     def step(self, server_payload: Dict[str, Any]) -> Dict[str, Any]:
