@@ -68,7 +68,7 @@ def _compute_server_delta(
         if k in current_state
     }
 
-    model.load_state_dict(full_initial, strict=True)
+    model.load_state_dict(full_initial, strict=False)
     return delta
 
 

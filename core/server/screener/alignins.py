@@ -62,6 +62,7 @@ class AlignInsScreener(BaseScreener):
         benign_indices = [idx for idx, (tda_z, mpsa_z) in enumerate(zip(tda_zscores, mpsa_zscores)) if tda_z <= self.tda_threshold and mpsa_z <= self.mpsa_threshold] or list(range(num_clients))
         screen_scores = [1.0 if idx in benign_indices else 0.0 for idx in range(num_clients)]
         context["alignins_benign_indices"] = benign_indices
+        context["alignins_client_norms"] = [float(v.norm(p=2).item()) for v in client_vectors]
         return screen_scores, context
 
     def _get_learnable_keys(self, global_model: torch.nn.Module, first_delta: Dict[str, torch.Tensor]) -> Sequence[str]:
