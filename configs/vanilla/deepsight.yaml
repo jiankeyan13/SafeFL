@@ -1,7 +1,7 @@
 # main_vanilla_deepsight.py - DeepSight 防御 + BadNets 攻击
-experiment_name: vanilla_deepsight_cifar10_resnet18
+experiment_name: deepsight
 logging:
-  project: FL_Base
+  project: SafeFL_Vanilla
   use_wandb: true
 
 model:

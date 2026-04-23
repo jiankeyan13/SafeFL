@@ -1,5 +1,5 @@
-# main_vanilla_mars.py - MARS + BadNets 攻击
-experiment_name: mars
+# main_vanilla - MarsNormal (MARS + |gamma|*std 缩放) + BadNets 攻击
+experiment_name: mars_normal
 logging:
   project: SafeFL_Vanilla
   use_wandb: true
@@ -13,7 +13,7 @@ model:
 dataset: cifar10
 
 algorithm:
-  name: mars
+  name: mars_normal
   params:
     screener:
       top_ratio: 0.05

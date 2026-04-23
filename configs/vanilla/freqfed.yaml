@@ -1,7 +1,7 @@
 # main_vanilla_freqfed.py - FreqFed defense + BadNets attack
-experiment_name: vanilla_freqfed_cifar10_resnet18
+experiment_name: freqfed
 logging:
-  project: FL_Base
+  project: SafeFL_Vanilla
   use_wandb: true
 
 model:

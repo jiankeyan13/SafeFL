@@ -1,7 +1,7 @@
 # main_vanilla.py - FedAvg + BadNets 攻击
-experiment_name: vanilla_fedavg_cifar10_resnet18
+experiment_name: fedavg
 logging:
-  project: FL_Base
+  project: SafeFL_Vanilla
   use_wandb: true
 
 model:

@@ -1,7 +1,7 @@
 # main_vanilla_krum.py - Multi-Krum 防御 + BadNets 攻击
-experiment_name: vanilla_multikrum_cifar10_resnet18
+experiment_name: multikrum
 logging:
-  project: FL_Base
+  project: SafeFL_Vanilla
   use_wandb: true
 
 model:

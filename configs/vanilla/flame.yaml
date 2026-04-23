@@ -1,7 +1,7 @@
 # main_vanilla_flame.py - FLAME 防御 + BadNets 攻击
-experiment_name: vanilla_flame_cifar10_resnet18
+experiment_name: flame
 logging:
-  project: FL_Base
+  project: SafeFL_Vanilla
   use_wandb: true
 
 model:

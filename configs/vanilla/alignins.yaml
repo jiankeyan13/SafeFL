@@ -1,8 +1,8 @@
 # AlignIns defense + BadNets attack
-experiment_name: vanilla_alignins_cifar10_resnet18
+experiment_name: alignins
 logging:
-  project: FL_Base
-  use_wandb: false
+  project: SafeFL_Vanilla
+  use_wandb: true
 
 model:
   name: resnet18
