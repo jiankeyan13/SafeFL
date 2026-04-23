@@ -188,6 +188,7 @@ class BaseClient:
             "client_id": self.owner_id,
             "delta": train_metrics["delta"],
             "metrics": train_metrics["train_loss"],
+            "num_samples": 1,
         }
 
     def step(self, server_payload: Dict[str, Any]) -> Dict[str, Any]:

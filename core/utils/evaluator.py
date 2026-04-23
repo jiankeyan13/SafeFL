@@ -19,7 +19,7 @@ class BaseMetric:
 
 
 class Accuracy(BaseMetric):
-    """计算分类准确率。可用于CDA（干净数据准确率）或ASR（攻击成功率）。"""
+    """计算分类准确率。可用于 CDA 或基于目标标签的 ASR。"""
     def __init__(self):
         self.correct = 0
         self.total = 0
@@ -85,7 +85,8 @@ class Evaluator:
         """
         在指定数据集上评估模型。
 
-        注意：传入毒化数据(poisoned_loader)时, accuracy即代表ASR。
+        注意：若 poisoned_loader 已将标签替换为攻击目标标签,
+        则 accuracy 即代表 targeted ASR。
         """
         was_training = model.training
         model.eval()

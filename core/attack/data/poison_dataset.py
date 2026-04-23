@@ -61,9 +61,11 @@ class PoisonedDatasetWrapper(Dataset):
                 return img, label
 
         elif self.mode == "test":
-            # 测试模式:全部投毒
+            # 测试模式:全部投毒,并将标签替换为攻击目标类别。
+            # 这样 evaluator 中的 accuracy 就等价于标准 targeted ASR:
+            # 带触发器样本中, 被模型预测为 target_label 的比例。
             poisoned_img = self.trigger_transform(img)
-            return poisoned_img, label
+            return poisoned_img, self.target_label
 
         else:  # 'val' or other modes
             return img, label
