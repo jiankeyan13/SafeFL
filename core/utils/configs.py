@@ -292,13 +292,14 @@ class DataConfig:
     dataset: str = "cifar10"                # 数据集名称
     root: str = "./data_source"             # 数据存储路径
     val_ratio: float = 0.1                  # 验证集比例
+    enable_proxy: bool = False              # 是否划出 proxy 供 server 端 BN 校准 (每类 10 条, 与 TaskGenerator 一致)
     partitioner: PartitionerConfig = field(default_factory=PartitionerConfig) # 划分器配置
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'DataConfig':
         """从字典解析配置"""
         kwargs = {}
-        for key in ['dataset', 'root', 'val_ratio']:
+        for key in ['dataset', 'root', 'val_ratio', 'enable_proxy']:
             if key in config_dict:
                 kwargs[key] = config_dict[key]
 
@@ -389,6 +390,7 @@ class GlobalConfig:
                 "root": self.data.root,
                 "num_clients": self.training.num_clients,
                 "val_ratio": self.data.val_ratio,
+                "enable_proxy": self.data.enable_proxy,
                 "partitioner": {
                     "name": self.data.partitioner.name,
                     "params": self.data.partitioner.params

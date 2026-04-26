@@ -17,3 +17,4 @@ algorithm:
 
 attack:
   enabled: true
+  malicious_epochs: 5

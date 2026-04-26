@@ -95,6 +95,7 @@ class BaseRunner:
             num_clients=self.training_config.num_clients,
             val_ratio=self.data_config.val_ratio,
             seed=self.seed,
+            enable_proxy=self.data_config.enable_proxy,
         )
         self.task_set, self.dataset_stores = generator.generate()
 

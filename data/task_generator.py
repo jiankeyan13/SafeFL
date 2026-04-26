@@ -28,7 +28,16 @@ class TaskGenerator:
     3. 执行 Train/Val 切分。
     4. 组装最终的 TaskSet。
     """
-    def __init__(self, dataset_name: str, root: str, partitioner: Partitioner, num_clients: int, val_ratio: float = 0.2, seed: int = 42):
+    def __init__(
+        self,
+        dataset_name: str,
+        root: str,
+        partitioner: Partitioner,
+        num_clients: int,
+        val_ratio: float = 0.2,
+        seed: int = 42,
+        enable_proxy: bool = False,
+    ):
         """
         Args:
             dataset_name: 数据集名称前缀 (如 'cifar10')，会自动拼接后缀找注册表。
@@ -37,12 +46,14 @@ class TaskGenerator:
             num_clients: 客户端数量。
             val_ratio: 从客户端分到的数据中切出多少作为本地测试集 (0.0 ~ 1.0)。
             seed: 随机种子，用于 Train/Val 切分。
+            enable_proxy: 为 True 时从训练集按类划出 proxy 样本 (每类 10 条) 并创建 SPLIT_PROXY 任务; 为 False 时不划样本、无 proxy 任务。
         """
         self.dataset_name = dataset_name
         self.root = root
         self.partitioner = partitioner
         self.num_clients = num_clients
         self.val_ratio = val_ratio
+        self.enable_proxy = enable_proxy
         self.rng = np.random.default_rng(seed)
 
         # 预加载数据源容器
@@ -59,7 +70,13 @@ class TaskGenerator:
         self._load_sources()
         full_train_store = self._get_train_plain_store()
 
-        proxy_indices, remaining_indices = self._sample_proxy_indices(full_train_store, per_class=10)
+        if self.enable_proxy:
+            proxy_indices, remaining_indices = self._sample_proxy_indices(
+                full_train_store, per_class=10
+            )
+        else:
+            proxy_indices = np.array([], dtype=np.intp)
+            remaining_indices = np.arange(len(full_train_store), dtype=np.intp)
         partition_result = self._partition_remaining(remaining_indices, full_train_store)
 
         final_task_set = TaskSet()
@@ -145,12 +162,13 @@ class TaskGenerator:
                 split=SPLIT_TEST_GLOBAL,
                 indices=list(range(len(test_store))),
             ))
-        final_task_set.add_task(Task(
-            owner_id=OWNER_SERVER,
-            dataset_tag=train_plain_tag(self.dataset_name),
-            split=SPLIT_PROXY,
-            indices=proxy_indices.tolist(),
-        ))
+        if len(proxy_indices) > 0:
+            final_task_set.add_task(Task(
+                owner_id=OWNER_SERVER,
+                dataset_tag=train_plain_tag(self.dataset_name),
+                split=SPLIT_PROXY,
+                indices=proxy_indices.tolist(),
+            ))
 
     def _load_sources(self) -> None:
         """内部方法：根据命名约定加载三个数据源。"""
