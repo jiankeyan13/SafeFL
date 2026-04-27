@@ -1,4 +1,4 @@
-# AlignIns defense + BadNets attack
+# main_vanilla.py - AlignIns + BadNets 攻击
 experiment_name: alignins
 logging:
   project: SafeFL_Vanilla
@@ -26,3 +26,4 @@ algorithm:
 
 attack:
   enabled: true
+  malicious_epochs: 5

@@ -1,4 +1,4 @@
-# main_vanilla_krum.py - Multi-Krum 防御 + BadNets 攻击
+# main_vanilla.py - Multi-Krum + BadNets 攻击
 experiment_name: multikrum
 logging:
   project: SafeFL_Vanilla
@@ -22,3 +22,4 @@ algorithm:
 
 attack:
   enabled: true
+  malicious_epochs: 5

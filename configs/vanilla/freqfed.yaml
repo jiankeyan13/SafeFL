@@ -1,4 +1,4 @@
-# main_vanilla_freqfed.py - FreqFed defense + BadNets attack
+# main_vanilla.py - FreqFed + BadNets 攻击
 experiment_name: freqfed
 logging:
   project: SafeFL_Vanilla
@@ -22,3 +22,4 @@ algorithm:
 
 attack:
   enabled: true
+  malicious_epochs: 5

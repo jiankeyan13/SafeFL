@@ -1,4 +1,4 @@
-# main_vanilla_mars.py - MARS + BadNets 攻击
+# main_vanilla.py - MARS + BadNets 攻击
 experiment_name: mars
 logging:
   project: SafeFL_Vanilla
@@ -24,3 +24,4 @@ algorithm:
 
 attack:
   enabled: true
+  malicious_epochs: 5

@@ -1,4 +1,4 @@
-# main_vanilla_deepsight.py - DeepSight 防御 + BadNets 攻击
+# main_vanilla.py - DeepSight + BadNets 攻击
 experiment_name: deepsight
 logging:
   project: SafeFL_Vanilla
@@ -17,3 +17,4 @@ algorithm:
 
 attack:
   enabled: true
+  malicious_epochs: 5
