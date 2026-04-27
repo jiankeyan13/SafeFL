@@ -1,5 +1,5 @@
 import math
-from typing import Dict, List, Any, Optional, Set, Tuple
+from typing import Dict, List, Any, Optional, Set, Tuple, Union
 
 import numpy as np
 import torch
@@ -233,6 +233,27 @@ class HeteroServer(BaseServer):
             device=self.device,
             context=context,
         )
+
+    @staticmethod
+    def serialize_order_book(
+        order_book: Dict[str, Any],
+    ) -> Union[Dict[str, Any], str]:
+        """将 _client_orders 中单层账本转为可 JSON 序列化的结构 (卷积为 out/in 索引, 其余为 indices)。"""
+        if not order_book:
+            return "full"
+        out: Dict[str, Any] = {}
+        for key, mapping in order_book.items():
+            if isinstance(mapping, tuple) and len(mapping) == 2:
+                t_o, t_i = mapping
+                out[key] = {
+                    "out": t_o.detach().cpu().tolist(),
+                    "in": t_i.detach().cpu().tolist(),
+                }
+            elif torch.is_tensor(mapping):
+                out[key] = {"indices": mapping.detach().cpu().tolist()}
+            else:
+                out[key] = mapping
+        return out
 
     def _track_client_order(self, client_id: str, order_dict: Dict[str, Any]) -> None:
         """缓存本轮分发给客户端的索引布局（账本）"""

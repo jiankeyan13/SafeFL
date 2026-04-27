@@ -53,6 +53,10 @@ class HeteroConfig:
     attacker: AttackerCapabilityConfig = field(default_factory=AttackerCapabilityConfig)
     """攻击者能力配置. 启用后, 恶意客户端将按给定 p_list 均匀分配能力值.
     """
+    log_neuron_selection: bool = False
+    """为 True 时, 每轮将各客户端子模型对应的通道/神经元选取 (order book) 追加写入实验目录下的 jsonl."""
+    neuron_selection_log_name: str = "neuron_selection.jsonl"
+    """相对 run 目录的日志文件名, 每行一个 JSON 对象, 含 round 与 per-client 选取."""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -61,6 +65,8 @@ class HeteroConfig:
             "alpha": self.alpha,
             "beta": self.beta,
             "attacker": self.attacker.to_dict(),
+            "log_neuron_selection": self.log_neuron_selection,
+            "neuron_selection_log_name": self.neuron_selection_log_name,
         }
 
     @classmethod
@@ -73,6 +79,10 @@ class HeteroConfig:
             alpha=float(config_dict.get("alpha", 3.0)),
             beta=float(config_dict.get("beta", 3.0)),
             attacker=AttackerCapabilityConfig.from_dict(config_dict.get("attacker", {})),
+            log_neuron_selection=bool(config_dict.get("log_neuron_selection", False)),
+            neuron_selection_log_name=str(
+                config_dict.get("neuron_selection_log_name", "neuron_selection.jsonl")
+            ),
         )
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import inspect
+import json
+import os
 import random
 from collections import defaultdict
 from functools import partial
@@ -17,6 +19,7 @@ from core.utils.registry import ALGORITHM_REGISTRY, MODEL_REGISTRY
 from data.constants import SPLIT_TRAIN, train_plain_tag
 from extension.HFL.cap_manager import CapManager
 from extension.HFL.config import HFLConfig
+from extension.HFL.hetero_server import HeteroServer
 import extension.HFL.algorithms  # noqa: F401
 
 
@@ -357,3 +360,25 @@ class HeteroRunner(Runner):
             f"b={benign_details.get('fallback_picks', 0)})"
         )
         return selected
+
+    def _after_broadcast(self, round_idx: int, selected_ids: List[str]) -> None:
+        hetero_cfg = self._get_hetero_config()
+        if not hetero_cfg.get("log_neuron_selection", False):
+            return
+        orders = getattr(self.server, "_client_orders", None)
+        if orders is None:
+            return
+        log_name = hetero_cfg.get("neuron_selection_log_name", "neuron_selection.jsonl")
+        path = os.path.join(self.logger.run_dir, log_name)
+        clients_payload: Dict[str, Any] = {}
+        for cid in selected_ids:
+            p = float(self.cap_manager.get_bucketed_capability(cid))
+            ob = orders.get(cid, {})
+            clients_payload[cid] = {
+                "p": p,
+                "neuron_order_book": HeteroServer.serialize_order_book(ob),
+            }
+        record = {"round": round_idx, "clients": clients_payload}
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self.logger.info(f"Neuron selection logged: {path} (round {round_idx})")
