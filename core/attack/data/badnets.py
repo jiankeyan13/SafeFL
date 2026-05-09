@@ -47,15 +47,17 @@ class BadNetsAttack:
             split: 数据划分标识 (透传, 未使用)。
             client_id: 客户端 ID (透传, 未使用)。
             round_idx: 轮次索引 (透传, 未使用).
-            **kwargs: 其他透传参数。
+            **kwargs: 其他参数. 支持 return_original_label: 为 True 时 test 模式返回
+                (投毒样本, 目标标签, 原始标签), 供 evaluate_backdoor 一次前向计算 ASR 与 Backdoor Acc.
 
         Returns:
             投毒后的数据集。
         """
         trigger = PatchTrigger(patch_size=self.patch_size, patch_value=self.patch_value,
                                location=self.patch_location)
+        return_original_label = bool(kwargs.get("return_original_label", False))
         return PoisonedDatasetWrapper(
             original_dataset=dataset, trigger_transform=trigger,
             target_label=self.target_label, poison_ratio=self.poison_ratio,
-            mode=mode, seed=self.seed
+            mode=mode, seed=self.seed, return_original_label=return_original_label,
         )

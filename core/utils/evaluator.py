@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from typing import Dict, Optional
 
+
 class BaseMetric:
     """评估指标基类，支持增量计算。"""
 
@@ -108,3 +109,55 @@ class Evaluator:
             model.train()
 
         return {name: metric.compute() for name, metric in self.metrics.items()}
+
+    @torch.no_grad()
+    def evaluate_backdoor(
+        self,
+        model: nn.Module,
+        dataloader: torch.utils.data.DataLoader,
+        criterion: Optional[nn.Module],
+        device: torch.device,
+    ) -> Dict[str, float]:
+        """
+        在带触发器的测试集上评估, 一次前向同时计算 targeted ASR 与 Backdoor Acc.
+
+        要求 dataloader 每条样本为 (inputs, target_label, original_label).
+        - ASR: 预测等于攻击目标标签的比例.
+        - backdoor_acc: 预测等于原始真实标签的比例.
+        """
+        was_training = model.training
+        model.eval()
+        model.to(device)
+
+        asr_correct = 0
+        backdoor_correct = 0
+        total = 0
+        total_loss = 0.0
+        loss_count = 0
+
+        for inputs, target_labels, original_labels in dataloader:
+            inputs = inputs.to(device)
+            target_labels = target_labels.to(device)
+            original_labels = original_labels.to(device)
+
+            outputs = model(inputs)
+            if criterion is not None:
+                loss = criterion(outputs, original_labels)
+                total_loss += loss.item() * original_labels.size(0)
+                loss_count += original_labels.size(0)
+
+            preds = outputs.argmax(dim=1)
+            asr_correct += preds.eq(target_labels).sum().item()
+            backdoor_correct += preds.eq(original_labels).sum().item()
+            total += target_labels.size(0)
+
+        if was_training:
+            model.train()
+
+        if total == 0:
+            out = {"asr": 0.0, "backdoor_acc": 0.0}
+        else:
+            out = {"asr": asr_correct / total, "backdoor_acc": backdoor_correct / total}
+        if criterion is not None and loss_count > 0:
+            out["backdoor_loss"] = total_loss / loss_count
+        return out

@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 from torch.utils.data import Dataset
 from typing import Callable, Optional
@@ -17,16 +16,20 @@ class PoisonedDatasetWrapper(Dataset):
         poison_ratio: float = 0.1,
         mode: str = "train",
         seed: Optional[int] = None,
+        return_original_label: bool = False,
     ):
         """
         Args:
             seed: 随机种子,用于确定投毒的样本子集,保证可复现性。
+            return_original_label: 仅在 mode='test' 时生效. True 时 __getitem__ 返回
+                (trigger(x), target_label, original_label), 用于一次前向同时计算 ASR 与 Backdoor Acc.
         """
         self.original_dataset = original_dataset
         self.trigger_transform = trigger_transform
         self.target_label = target_label
         self.poison_ratio = poison_ratio
         self.mode = mode
+        self.return_original_label = return_original_label
 
         dataset_size = len(self.original_dataset)
         # 使用 numpy bool array 替代 set,内存占用从 ~72 bytes/element 降至 1 byte/element
@@ -61,10 +64,10 @@ class PoisonedDatasetWrapper(Dataset):
                 return img, label
 
         elif self.mode == "test":
-            # 测试模式:全部投毒,并将标签替换为攻击目标类别。
-            # 这样 evaluator 中的 accuracy 就等价于标准 targeted ASR:
-            # 带触发器样本中, 被模型预测为 target_label 的比例。
+            # 测试模式:全部投毒. 默认只返回目标标签以便通用 Evaluator 把 accuracy 当作 ASR.
             poisoned_img = self.trigger_transform(img)
+            if self.return_original_label:
+                return poisoned_img, self.target_label, label
             return poisoned_img, self.target_label
 
         else:  # 'val' or other modes

@@ -44,8 +44,10 @@ class Runner(BaseRunner):
         test_store = self.dataset_stores[test_task.dataset_tag]
         clean_test_dataset = Subset(test_store.dataset, test_task.indices)
 
-        # 包装为投毒测试集 (mode='test' 表示全部投毒)
-        poisoned_test_dataset = attack_profile.poison_dataset(clean_test_dataset, mode="test")
+        # 包装为投毒测试集 (mode='test' 表示全部投毒, 同时返回目标标签与原始标签)
+        poisoned_test_dataset = attack_profile.poison_dataset(
+            clean_test_dataset, mode="test", return_original_label=True
+        )
 
         client_config = ClientConfig.from_dict(self.config.get("client", {}))
         self.poisoned_eval_loader = DataLoader(
@@ -54,7 +56,9 @@ class Runner(BaseRunner):
             shuffle=False,
             num_workers=client_config.num_workers,
         )
-        self.logger.info(f"Poisoned eval loader initialized for ASR (strategy: {strategy.name})")
+        self.logger.info(
+            f"Poisoned eval loader initialized for ASR & Backdoor Acc (strategy: {strategy.name})"
+        )
 
     def _setup_attack(self) -> None:
         """初始化攻击策略, 按 fraction 将恶意客户端分配到各策略."""
@@ -135,7 +139,7 @@ class Runner(BaseRunner):
         return selected
 
     def _run_global_eval(self, round_idx: int) -> Dict[str, float]:
-        """评估全局模型，包括 CDA (干净数据准确率) 和 ASR (攻击成功率)。"""
+        """评估全局模型，包括 CDA (干净数据准确率), ASR 与 Backdoor Acc."""
         # 1. CDA 评估
         results = self.server.eval(
             evaluator=self.evaluator, dataloader=self.eval_loader,
@@ -143,16 +147,27 @@ class Runner(BaseRunner):
         )
         prefixed = {f"global/{k}": v for k, v in results.items()}
 
-        # 2. ASR 评估
+        # 2. ASR 与 Backdoor Acc (同一次前向)
         if self.attack_config.enabled and self.poisoned_eval_loader is not None:
-            asr_res = self.server.eval(self.evaluator, self.poisoned_eval_loader, self.criterion, self.device)
-            results["asr"] = asr_res.get("accuracy", 0.0)
+            bd_res = self.evaluator.evaluate_backdoor(
+                self.server.global_model,
+                self.poisoned_eval_loader,
+                self.criterion,
+                self.device,
+            )
+            results["asr"] = bd_res["asr"]
+            results["backdoor_acc"] = bd_res["backdoor_acc"]
             prefixed["global/asr"] = results["asr"]
+            prefixed["global/backdoor_acc"] = results["backdoor_acc"]
+            if "backdoor_loss" in bd_res:
+                results["backdoor_loss"] = bd_res["backdoor_loss"]
+                prefixed["global/backdoor_loss"] = results["backdoor_loss"]
 
         # 统一记录并打印一行摘要
         self.logger.log_metrics(prefixed, step=round_idx)
         summary = f"accuracy: {results['accuracy']:.4f} | loss: {results['loss']:.4f}"
-        if "asr" in results: summary += f" | asr: {results['asr']:.4f}"
+        if "asr" in results:
+            summary += f" | asr: {results['asr']:.4f} | backdoor_acc: {results['backdoor_acc']:.4f}"
         self.logger.info(f"[Global Eval] {summary}")
 
         return results
