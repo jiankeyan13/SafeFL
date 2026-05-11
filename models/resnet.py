@@ -98,7 +98,7 @@ class ResNet(nn.Module):
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
-        out = F.avg_pool2d(out, 4)
+        out = F.adaptive_avg_pool2d(out, 1)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
         return out
@@ -111,8 +111,12 @@ def ResNet18(num_classes=10, input_channels=3):
         model.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
     return model
 
-def ResNet34():
-    return ResNet(BasicBlock, [3, 4, 6, 3])
+@MODEL_REGISTRY.register("resnet34")
+def ResNet34(num_classes=10, input_channels=3):
+    model = ResNet(BasicBlock, [3, 4, 6, 3], num_classes=num_classes)
+    if input_channels != 3:
+        model.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
+    return model
 
 
 def ResNet50():

@@ -1,0 +1,12 @@
+# @package _global_
+dataset: tiny_imagenet
+data:
+  dataset: tiny_imagenet
+  root: ./data_source
+  val_ratio: 0.1
+  enable_proxy: false
+
+# 须在 defaults 中让 dataset 排在 model 之后, 此处才能覆盖模型的 num_classes
+model:
+  params:
+    num_classes: 200
