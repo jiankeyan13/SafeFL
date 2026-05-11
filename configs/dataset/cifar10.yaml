@@ -1,0 +1,7 @@
+# @package _global_
+dataset: cifar10
+data:
+  dataset: cifar10
+  root: ./data_source
+  val_ratio: 0.1
+  enable_proxy: false

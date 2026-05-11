@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - override /algorithm: multi_krum
+  - override /attack: badnets
+
+experiment_name: multikrum

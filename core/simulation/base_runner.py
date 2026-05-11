@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, Subset
 from core.utils.logger import Logger
 from core.utils.evaluator import Accuracy, AverageLoss, Evaluator
 from core.utils.registry import ALGORITHM_REGISTRY, MODEL_REGISTRY
-from core.utils.configs import ClientConfig, TrainingConfig, DataConfig, GlobalConfig
+from core.config import ClientConfig, TrainingConfig, DataConfig, GlobalConfig
 from core.utils.lr_schedule import get_lr_from_schedule
 from core.client.base_client import BaseClient
 from core.server.base_server import BaseServer
@@ -32,10 +32,12 @@ class BaseRunner:
       3. 管理实验状态: 轮次计数, Checkpoint, Logger 生命周期
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        # 支持传入字典或直接使用默认 GlobalConfig
+    def __init__(self, config: Optional[Dict[str, Any] | GlobalConfig] = None) -> None:
+        # 支持传入字典、GlobalConfig 或直接使用默认 GlobalConfig
         if config is None:
             self.global_config = GlobalConfig()
+        elif isinstance(config, GlobalConfig):
+            self.global_config = config
         else:
             self.global_config = GlobalConfig.from_dict(config)
         

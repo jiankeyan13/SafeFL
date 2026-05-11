@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 from core.client.base_client import BaseClient
-from core.utils.configs import ClientConfig
+from core.config import ClientConfig
 from core.utils.evaluator import Evaluator
 from data.dataset_store import DatasetStore
 from data.task import TaskSet

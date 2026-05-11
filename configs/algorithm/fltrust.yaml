@@ -1,0 +1,11 @@
+name: fltrust
+params:
+  screener:
+    params:
+      lr: 0.01
+      momentum: 0.9
+      weight_decay: 0.0005
+      epochs: 1
+  aggregator:
+    params:
+      eps: 1.0e-12

@@ -16,7 +16,7 @@ import csv
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.utils.configs import LoggerConfig
+    from core.config import LoggerConfig
 import json
 import logging
 import os

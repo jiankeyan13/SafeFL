@@ -8,7 +8,7 @@ from core.server.screener.mars import MARSGammaBnStatScreener
 from core.utils.registry import ALGORITHM_REGISTRY
 
 
-@ALGORITHM_REGISTRY.register("mars")
+@ALGORITHM_REGISTRY.register("mars_normal")
 def build_mars_normal_algorithm(
     model, device, config: dict, seed: int, **params
 ) -> Tuple[BaseServer, Type[BaseClient]]:

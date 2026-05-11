@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - override /algorithm: fltrust
+  - override /attack: badnets
+
+experiment_name: fltrust
+data:
+  enable_proxy: true

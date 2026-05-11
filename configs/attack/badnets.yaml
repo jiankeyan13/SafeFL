@@ -1,0 +1,8 @@
+enabled: true
+malicious_fraction: 0.2
+per_round_fraction: 0.2
+malicious_epochs: 5
+strategies:
+  - name: badnets
+    fraction: 1.0
+    params: {}

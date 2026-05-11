@@ -1,0 +1,9 @@
+project: SafeFL_Vanilla
+name: ${experiment_name}
+log_root: ./logs
+log_level: INFO
+use_wandb: true
+use_tensorboard: false
+use_csv: false
+console_metrics: false
+save_interval: 10

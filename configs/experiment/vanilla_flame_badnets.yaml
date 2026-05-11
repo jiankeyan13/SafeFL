@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - override /algorithm: flame
+  - override /attack: badnets
+
+experiment_name: flame

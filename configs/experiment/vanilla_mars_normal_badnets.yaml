@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - override /algorithm: mars_normal
+  - override /attack: badnets
+
+experiment_name: mars_normal

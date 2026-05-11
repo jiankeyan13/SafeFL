@@ -1,0 +1,5 @@
+# @package data.partitioner
+name: dirichlet
+params:
+  alpha: 0.7
+  max_retries: 100

@@ -7,7 +7,7 @@ from data.task import Task, TaskSet
 from data.dataset_store import DatasetStore
 
 if TYPE_CHECKING:
-    from core.utils.configs import PartitionerConfig
+    from core.config import PartitionerConfig
 
 class Partitioner(ABC):
     """

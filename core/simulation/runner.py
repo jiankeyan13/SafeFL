@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Subset
 from core.attack import build_attack
 from core.client.malicious_client import MaliciousClient
 from core.simulation.base_runner import BaseRunner
-from core.utils.configs import ClientConfig, apply_malicious_epochs_override
+from core.config import ClientConfig, apply_malicious_epochs_override
 from data.constants import OWNER_SERVER, SPLIT_TEST_GLOBAL
 
 

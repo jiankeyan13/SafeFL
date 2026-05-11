@@ -7,3 +7,4 @@ from .foolsgold import FoolsGoldScreener
 from .freqfed import FreqFedScreener
 from .mars import MARSGammaBnStatScreener, MARSScreener
 from .alignins import AlignInsScreener
+from .lockdown_screener import LockdownScreener

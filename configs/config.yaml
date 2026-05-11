@@ -1,0 +1,23 @@
+defaults:
+  - dataset: cifar10
+  - partitioner: dirichlet
+  - model: resnet18
+  - algorithm: fedavg
+  - attack: badnets
+  - training: default
+  - logging: wandb
+  - optional experiment: null
+  - _self_
+
+experiment_name: ${algorithm.name}
+device: cuda
+seed: 42
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: logs/${now:%Y-%m-%d}/${experiment_name}_${now:%H-%M-%S}
+  sweep:
+    dir: logs/multirun/${now:%Y-%m-%d}
+    subdir: ${hydra.job.num}

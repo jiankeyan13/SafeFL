@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 
 from core.utils.evaluator import Evaluator
-from core.utils.configs import ClientConfig, TrainerConfig
+from core.config import ClientConfig, TrainerConfig
 from data.dataset_store import DatasetStore
 from data.task import TaskSet
 from data.constants import SPLIT_TRAIN, SPLIT_TEST, client_owner

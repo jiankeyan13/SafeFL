@@ -4,7 +4,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from core.utils.configs import GlobalConfig
+from core.config import GlobalConfig
 
 
 @dataclass

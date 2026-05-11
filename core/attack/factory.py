@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Dict, Any
 
-from core.utils.configs import AttackStrategyConfig
+from core.config import AttackStrategyConfig
 from core.utils.registry import ATTACK_REGISTRY
 
 # 各攻击类型的默认 params, 用户未配置时使用

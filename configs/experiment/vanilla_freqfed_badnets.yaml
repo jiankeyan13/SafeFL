@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - override /algorithm: freqfed
+  - override /attack: badnets
+
+experiment_name: freqfed
