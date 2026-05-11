@@ -80,8 +80,14 @@ class BaseRunner:
         self.logger.info(f"Device: {self.device} | Clients: {len(self.client_ids)}")
         self.logger.info(
             f"Server: {type(self.server).__name__} | "
-            f"Client: {self.client_class.__name__}"
+            f"Client: {self._callable_name(self.client_class)}"
         )
+
+    @staticmethod
+    def _callable_name(obj: Any) -> str:
+        if isinstance(obj, partial):
+            return BaseRunner._callable_name(obj.func)
+        return getattr(obj, "__name__", type(obj).__name__)
 
     def _setup_data_pipeline(self) -> None:
         """构建 TaskSet 与 DatasetStores."""
