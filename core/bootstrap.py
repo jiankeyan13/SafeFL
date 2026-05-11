@@ -3,4 +3,5 @@ def bootstrap_registries() -> None:
     import algorithms  # noqa: F401
     import core.attack  # noqa: F401
     import data.datasets.cifar10  # noqa: F401
+    import data.datasets.cifar100  # noqa: F401
     import models.resnet  # noqa: F401

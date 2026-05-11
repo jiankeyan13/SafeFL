@@ -1,7 +1,7 @@
 defaults:
-  - dataset: cifar10
   - partitioner: dirichlet
   - model: resnet18
+  - dataset: cifar10
   - algorithm: fedavg
   - attack: badnets
   - training: default
