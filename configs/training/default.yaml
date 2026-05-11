@@ -9,7 +9,7 @@ training:
     enabled: true
     name: warmup_cosine
     warmup_ratio: 0.1
-    min_lr: 0.0
+    min_lr: 1.0e-5
     warmup_start_lr: 0.0
 
 client:
