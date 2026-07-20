@@ -13,10 +13,28 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     "badnets": {
         "target_label": 0,
         "poison_ratio": 0.1,
-        "patch_size": 3,
+        "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
-    }
+    },
+    "batman": {
+        "target_label": 0,
+        "poison_ratio": 0.1,
+        "patch_size": 5,
+        "patch_value": 1.0,
+        "patch_location": "bottom_right",
+        "rank": 4,
+        "lamda_reg": 20.0,
+        "beta_reg": 15.0,
+        "num_selected_layers": 9,
+        "selected_layer_ratio": None,
+        "stats_top_layers": None,
+        "stats_layer_ratio": None,
+        "layer_selection": "diff_top",
+        "layer_selection_seed": None,
+        "log_selected_layers": True,
+        "layer_selection_log_path": None,
+    },
 }
 
 

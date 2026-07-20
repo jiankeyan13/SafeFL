@@ -8,6 +8,7 @@ logs/
 wandb/
 trash/
 tests/
+docx/
 # --- 数据集 (不要上传 CIFAR10 数据) ---
 data_source/
 
@@ -26,5 +27,3 @@ data_source/
 .DS_Store
 .python-version
 .pyproject.toml
-
-BackFed-main/

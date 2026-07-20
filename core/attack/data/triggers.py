@@ -10,7 +10,7 @@ class PatchTrigger(nn.Module):
     继承 nn.Module, 与 torchvision.transforms 组合使用。
     """
     def __init__(self, 
-                 patch_size: int = 3, 
+                 patch_size: int = 5, 
                  patch_value: Union[float, Tuple[float, float, float]] = 1.0, 
                  location: str = 'bottom_right'):
         """

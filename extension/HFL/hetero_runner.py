@@ -84,7 +84,8 @@ class HeteroRunner(Runner):
             rc = apply_malicious_epochs_override(
                 round_config, self.attack_config.malicious_epochs
             )
-            return MaliciousClient(
+            client_cls = getattr(attack_profile, "client_class", None) or MaliciousClient
+            return client_cls(
                 client_id=cid, task_set=self.task_set, stores=self.dataset_stores,
                 model=model, device=self.device, config=rc, evaluator=self.evaluator,
                 attack_profile=attack_profile, round_idx=self.current_round,

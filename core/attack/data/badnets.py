@@ -16,7 +16,7 @@ class BadNetsAttack:
     纯数据端攻击,仅实现 poison_dataset,不干预训练和上传。
     """
 
-    def __init__(self, target_label: int, poison_ratio: float = 0.1, patch_size: int = 3,
+    def __init__(self, target_label: int, poison_ratio: float = 0.1, patch_size: int = 5,
                  patch_value: float = 1.0, patch_location: str = "bottom_right",
                  seed: Optional[int] = None):
         """

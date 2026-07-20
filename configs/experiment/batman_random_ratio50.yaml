@@ -1,0 +1,37 @@
+# @package _global_
+defaults:
+  - override /algorithm: fedavg
+  - override /attack: batman
+  - override /model: resnet18
+  - override /dataset: cifar10
+
+experiment_name: batman_random_ratio50
+
+client:
+  lr: 0.1
+
+training:
+  clients_fraction: 0.2
+  lr_schedule:
+    enabled: true
+    name: warmup_cosine
+    warmup_ratio: 0.1
+    min_lr: 1.0e-5
+    warmup_start_lr: 0.0
+
+attack:
+  enabled: true
+  malicious_fraction: 0.2
+  per_round_fraction: 0.2
+  strategies:
+    - name: batman
+      fraction: 1.0
+      params:
+        layer_selection: random
+        selected_layer_ratio: 0.5
+        layer_selection_seed: 42
+        log_selected_layers: true
+
+logging:
+  use_csv: true
+  console_metrics: true
