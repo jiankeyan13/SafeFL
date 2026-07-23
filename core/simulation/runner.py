@@ -106,12 +106,18 @@ class Runner(BaseRunner):
             strategy = self.client_strategy_map.get(cid)
             if strategy is None:
                 continue
+            params = dict(strategy.params)
+            # 将 driver 上已解析的绝对 delta_log_dir 传给 Ray worker
+            attack_profile = self.client_attack_map.get(cid)
+            resolved_dir = getattr(attack_profile, "delta_log_dir", None)
+            if resolved_dir:
+                params.setdefault("delta_log_dir", resolved_dir)
             spec: Dict[str, Any] = {
                 "kind": "malicious",
                 "strategy": {
                     "name": strategy.name,
                     "fraction": strategy.fraction,
-                    "params": dict(strategy.params),
+                    "params": params,
                 },
                 "malicious_epochs": self.attack_config.malicious_epochs,
                 "round_idx": round_idx,

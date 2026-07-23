@@ -17,6 +17,16 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "patch_value": 1.0,
         "patch_location": "bottom_right",
     },
+    "badnets_dual": {
+        "target_label": 0,
+        "poison_ratio": 0.1,
+        "patch_size": 3,
+        "patch_value": 1.0,
+        "patch_location": "bottom_right",
+        "delta_log_interval": 15,
+        "delta_log_dir": None,
+        "delta_log_enabled": True,
+    },
     "batman": {
         "target_label": 0,
         "poison_ratio": 0.1,
