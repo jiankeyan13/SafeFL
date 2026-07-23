@@ -21,3 +21,6 @@ wandb>=0.15.0
 # Config
 hydra-core>=1.3.2
 PyYAML>=6.0
+
+# Parallel simulation
+ray>=2.9.0

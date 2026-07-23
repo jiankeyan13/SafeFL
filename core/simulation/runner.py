@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Subset
 from core.attack import build_attack
 from core.client.malicious_client import MaliciousClient
 from core.simulation.base_runner import BaseRunner
-from core.config import ClientConfig, apply_malicious_epochs_override
+from core.config import AttackStrategyConfig, ClientConfig, apply_malicious_epochs_override
 from data.constants import OWNER_SERVER, SPLIT_TEST_GLOBAL
 
 
@@ -20,12 +20,13 @@ class Runner(BaseRunner):
     """
 
     def _setup(self) -> None:
-        super()._setup()
         self.attack_config = self.global_config.attack
         self.current_round = 0
         self.malicious_client_ids: Set[str] = set()
         self.client_attack_map: Dict[str, Any] = {}
+        self.client_strategy_map: Dict[str, AttackStrategyConfig] = {}
         self.poisoned_eval_loader: Optional[DataLoader] = None
+        super()._setup()
         if self.attack_config.enabled:
             self._setup_attack()
             self._setup_poisoned_eval_loader()
@@ -79,6 +80,7 @@ class Runner(BaseRunner):
             attack_profile = build_attack(strategy)
             for cid in malicious_list[start_idx:end_idx]:
                 self.client_attack_map[cid] = attack_profile
+                self.client_strategy_map[cid] = strategy
 
             start_idx = end_idx
 
@@ -87,6 +89,38 @@ class Runner(BaseRunner):
             f"strategies: {[s.name for s in self.attack_config.strategies]}, "
             f"malicious ids: {sorted(list(self.malicious_client_ids))}"
         )
+
+    def _build_client_job_specs(
+        self,
+        selected_ids: List[str],
+        client_config: ClientConfig,
+        round_idx: int,
+    ) -> Dict[str, Dict[str, Any]]:
+        specs = super()._build_client_job_specs(selected_ids, client_config, round_idx)
+        if not self.attack_config.enabled:
+            return specs
+
+        for cid in selected_ids:
+            if cid not in self.malicious_client_ids:
+                continue
+            strategy = self.client_strategy_map.get(cid)
+            if strategy is None:
+                continue
+            spec: Dict[str, Any] = {
+                "kind": "malicious",
+                "strategy": {
+                    "name": strategy.name,
+                    "fraction": strategy.fraction,
+                    "params": dict(strategy.params),
+                },
+                "malicious_epochs": self.attack_config.malicious_epochs,
+                "round_idx": round_idx,
+            }
+            model_params = self._default_model_params_for_client(cid)
+            if model_params:
+                spec["model_params"] = model_params
+            specs[cid] = spec
+        return specs
 
     def _create_client(self, cid: str, round_config: ClientConfig):
         if self.attack_config.enabled and cid in self.malicious_client_ids:
@@ -182,27 +216,30 @@ class Runner(BaseRunner):
         self.logger.info(">>> Start Training")
         best_acc = 0.0
 
-        for round_idx in range(total_rounds):
-            self.current_round = round_idx
-            self.logger.info(f"--- Round {round_idx} / {total_rounds - 1} ---")
+        try:
+            for round_idx in range(total_rounds):
+                self.current_round = round_idx
+                self.logger.info(f"--- Round {round_idx} / {total_rounds - 1} ---")
 
-            selected_ids = self._select_clients(round_idx)
-            server_payloads = self.server.broadcast(selected_ids)
-            updates, round_lr = self._run_local_training(selected_ids, server_payloads, round_idx)
-            self.server.step(updates, proxy_loader=self.proxy_loader)
+                selected_ids = self._select_clients(round_idx)
+                server_payloads = self.server.broadcast(selected_ids)
+                updates, round_lr = self._run_local_training(selected_ids, server_payloads, round_idx)
+                self.server.step(updates, proxy_loader=self.proxy_loader)
 
-            train_metrics = self._aggregate_train_metrics(updates)
-            train_metrics["train/lr"] = round_lr
-            self.logger.log_metrics(train_metrics, step=round_idx)
+                train_metrics = self._aggregate_train_metrics(updates)
+                train_metrics["train/lr"] = round_lr
+                self.logger.log_metrics(train_metrics, step=round_idx)
 
-            test_metrics = self._run_global_eval(round_idx)
+                test_metrics = self._run_global_eval(round_idx)
 
-            if round_idx % eval_interval == 0:
-                self._run_local_eval(round_idx)
+                if round_idx % eval_interval == 0:
+                    self._run_local_eval(round_idx)
 
-            if test_metrics.get("accuracy", 0.0) > best_acc:
-                best_acc = test_metrics["accuracy"]
-                self._save_checkpoint(round_idx)
+                if test_metrics.get("accuracy", 0.0) > best_acc:
+                    best_acc = test_metrics["accuracy"]
+                    self._save_checkpoint(round_idx)
 
-        self.logger.info(f"Training Finished. Best Accuracy: {best_acc:.4f}")
-        self.logger.close()
+            self.logger.info(f"Training Finished. Best Accuracy: {best_acc:.4f}")
+        finally:
+            self._shutdown_parallel_training()
+            self.logger.close()

@@ -1,7 +1,7 @@
 # @package _global_
 training:
   num_clients: 100
-  rounds: 100
+  rounds: 150
   clients_fraction: 0.2
   eval_interval: 5
   local_eval_ratio: 0.2
@@ -9,7 +9,7 @@ training:
     enabled: true
     name: warmup_cosine
     warmup_ratio: 0.1
-    min_lr: 1.0e-5
+    min_lr: 5.0e-5
     warmup_start_lr: 0.0
 
 client:
@@ -18,7 +18,7 @@ client:
   weight_decay: 0.0005
   optimizer_name: SGD
   criterion_name: CrossEntropyLoss
-  epochs: 2
+  epochs: 3
   batch_size: 32
   num_workers: 0
   grad_clip_norm: 5.0

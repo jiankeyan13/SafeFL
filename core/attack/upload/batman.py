@@ -211,7 +211,7 @@ def make_layer_selection_rng(
 def rank_critical_layers(
     poisoned_state: Mapping[str, torch.Tensor],
     global_state: Mapping[str, torch.Tensor],
-    strategy: str = "diff_top",
+    strategy: str = "global_deviation",
     rng: Optional[random.Random] = None,
 ) -> List[LayerScore]:
     """Return all eligible layers ranked by the chosen strategy (desc)."""
@@ -233,7 +233,7 @@ def select_critical_layers(
     poisoned_state: Mapping[str, torch.Tensor],
     global_state: Mapping[str, torch.Tensor],
     number_of_layers: int,
-    strategy: str = "diff_top",
+    strategy: str = "global_deviation",
     rng: Optional[random.Random] = None,
 ) -> List[str]:
     """Dispatch layer selection by strategy name (deduped for alignment)."""
@@ -410,7 +410,7 @@ class BatmanAttack:
         self,
         target_label: int = 0,
         poison_ratio: float = 0.1,
-        patch_size: int = 5,
+        patch_size: int = 3,
         patch_value: float = 1.0,
         patch_location: str = "bottom_right",
         seed: Optional[int] = None,
@@ -422,7 +422,7 @@ class BatmanAttack:
         selected_layer_ratio: Optional[float] = None,
         stats_top_layers: Optional[int] = None,
         stats_layer_ratio: Optional[float] = None,
-        layer_selection: str = "diff_top",
+        layer_selection: str = "global_deviation",
         layer_selection_seed: Optional[int] = None,
         log_selected_layers: bool = True,
         layer_selection_log_path: Optional[str] = None,

@@ -46,16 +46,25 @@ class HeteroRunner(Runner):
     def _setup_model(self) -> None:
         model_conf = self.config["model"]
         self.model_cls = MODEL_REGISTRY.get(model_conf["name"])
+        self.model_name = model_conf["name"]
 
         self._model_base_params = dict(model_conf.get("params", {}))
         self._model_supports_p = "p" in inspect.signature(self.model_cls).parameters
         if self._model_supports_p:
             self._model_base_params.pop("p", None)
 
+        # Ray worker 默认参数不含 p; 每客户端 p 由 job_specs.model_params 注入
+        self.model_params = dict(self._model_base_params)
+
         global_params = dict(self._model_base_params)
         if self._model_supports_p:
             global_params["p"] = 1.0
         self.model_fn = partial(self.model_cls, **global_params)
+
+    def _default_model_params_for_client(self, cid: str) -> Dict[str, Any]:
+        if self._model_supports_p:
+            return {"p": float(self.cap_manager.get_bucketed_capability(cid))}
+        return {}
 
     def _setup_algorithm(self) -> None:
         algo_conf = self.config["algorithm"]

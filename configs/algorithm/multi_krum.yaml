@@ -2,5 +2,7 @@ name: multi_krum
 params:
   screener:
     params:
+      # n=20 (clients_fraction=0.2). True malicious per round ~4.
+      # f matches expected malicious count; m = n - f (Blanchard default).
       f: 4
-      m: 14
+      m: 16

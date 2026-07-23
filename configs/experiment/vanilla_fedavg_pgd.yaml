@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - override /algorithm: fedavg
+  - override /attack: pgd
+
+experiment_name: fedavg_pgd

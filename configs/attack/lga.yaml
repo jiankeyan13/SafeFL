@@ -3,6 +3,6 @@ malicious_fraction: 0.2
 per_round_fraction: 0.2
 malicious_epochs: 3
 strategies:
-  - name: badnets
+  - name: lga
     fraction: 1.0
     params: {}

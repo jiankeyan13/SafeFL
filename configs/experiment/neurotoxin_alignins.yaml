@@ -1,12 +1,9 @@
 # @package _global_
 defaults:
-  - override /algorithm: fedavg
-  - override /attack: batman
+  - override /algorithm: alignins
+  - override /attack: neurotoxin
   - override /model: resnet18
   - override /dataset: cifar10
-
-# NOTE: config.yaml 末尾的 experiment_name=${algorithm.name} 会覆盖此处,
-# 启动时需 CLI 显式传入 experiment_name / logging.name / logging.project.
 
 client:
   lr: 0.1
@@ -25,7 +22,7 @@ attack:
   malicious_fraction: 0.2
   per_round_fraction: 0.2
   strategies:
-    - name: batman
+    - name: neurotoxin
       fraction: 1.0
       params: {}
 

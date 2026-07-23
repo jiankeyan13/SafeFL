@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - override /algorithm: fedavg
+  - override /algorithm: lockdown
   - override /attack: batman
   - override /model: resnet18
   - override /dataset: cifar10

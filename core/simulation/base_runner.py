@@ -14,13 +14,30 @@ from torch.utils.data import DataLoader, Subset
 from core.utils.logger import Logger
 from core.utils.evaluator import Accuracy, AverageLoss, Evaluator
 from core.utils.registry import ALGORITHM_REGISTRY, MODEL_REGISTRY
-from core.config import ClientConfig, TrainingConfig, DataConfig, GlobalConfig
+from core.config import ClientConfig, TrainingConfig, DataConfig, GlobalConfig, ParallelConfig
 from core.utils.lr_schedule import get_lr_from_schedule
 from core.client.base_client import BaseClient
 from core.server.base_server import BaseServer
+from core.simulation.ray_executor import (
+    serialize_client_class,
+    try_create_ray_executor,
+)
 from data.constants import OWNER_SERVER, SPLIT_PROXY, SPLIT_TEST_GLOBAL
 from data.task_generator import TaskGenerator
 from data.partitioner import build_partitioner
+
+
+def _clone_state_dict_cpu(
+    state: Optional[Dict[str, torch.Tensor]],
+) -> Optional[Dict[str, torch.Tensor]]:
+    """Clone a state/delta dict onto CPU for client injection / Ray transport."""
+    if state is None:
+        return None
+    return {
+        k: v.detach().cpu().clone() if torch.is_tensor(v) else v
+        for k, v in state.items()
+    }
+
 
 class BaseRunner:
     """
@@ -59,6 +76,8 @@ class BaseRunner:
         self.criterion:       Optional[nn.Module] = None
         self.eval_loader:     Optional[DataLoader] = None
         self.proxy_loader:    Optional[DataLoader] = None
+        self._train_executor: Any = None
+        self.parallel_config: ParallelConfig = self.global_config.parallel
 
         # Logger 从 GlobalConfig.logger_config 构建, _setup 末尾才 start() (唯一触发 IO 的时机)
         self.logger: Logger = Logger.from_logger_config(
@@ -82,6 +101,7 @@ class BaseRunner:
             f"Server: {type(self.server).__name__} | "
             f"Client: {self._callable_name(self.client_class)}"
         )
+        self._setup_parallel_training()
 
     @staticmethod
     def _callable_name(obj: Any) -> str:
@@ -111,7 +131,46 @@ class BaseRunner:
         """构建模型工厂函数 (model_fn), 供构建客户端时重复调用."""
         model_conf     = self.config["model"]
         model_cls      = MODEL_REGISTRY.get(model_conf["name"])
-        self.model_fn  = partial(model_cls, **model_conf.get("params", {}))
+        self.model_name = model_conf["name"]
+        self.model_params = dict(model_conf.get("params", {}))
+        self.model_fn  = partial(model_cls, **self.model_params)
+
+    def _setup_parallel_training(self) -> None:
+        """按 parallel 配置初始化 Ray 执行器; 失败时回退串行."""
+        self.parallel_config = ParallelConfig.from_dict(self.config.get("parallel", {}))
+        self.config["parallel"] = self.parallel_config.to_dict()
+        executor, reason = try_create_ray_executor(self.parallel_config)
+        if reason:
+            self.logger.info(reason)
+        if executor is None:
+            self._train_executor = None
+            self.logger.info("Local training backend: sequential")
+            return
+        try:
+            executor.start(
+                task_set=self.task_set,
+                stores=self.dataset_stores,
+                model_name=self.model_name,
+                model_params=self.model_params,
+                default_client_class=self.client_class,
+            )
+            self._train_executor = executor
+            self.logger.info(
+                f"Local training backend: ray | gpu_ids={executor.gpu_ids} | "
+                f"actors={executor.num_actors}"
+            )
+        except Exception as exc:
+            self.logger.info(f"Ray 启动失败 ({exc}), 回退到 sequential")
+            try:
+                executor.shutdown()
+            except Exception:
+                pass
+            self._train_executor = None
+
+    def _shutdown_parallel_training(self) -> None:
+        if self._train_executor is not None:
+            self._train_executor.shutdown()
+            self._train_executor = None
 
     def _setup_algorithm(self) -> None:
         """通过 ALGORITHM_REGISTRY 构建 (server, client_class), 并列举客户端 ID."""
@@ -205,7 +264,23 @@ class BaseRunner:
             self.logger.info(f"Training Finished. Best Accuracy: {best_acc:.4f}")
 
         finally:
+            self._shutdown_parallel_training()
             self.logger.close()
+
+    def _get_prev_global_delta_cpu(self) -> Optional[Dict[str, torch.Tensor]]:
+        """上一轮聚合 delta 的 CPU 副本; 无则 None. 不需要的策略可忽略该属性."""
+        prev = getattr(self.server, "last_aggregated_delta", None)
+        return _clone_state_dict_cpu(prev)
+
+    def _inject_prev_global_delta(
+        self,
+        client: BaseClient,
+        prev_global_delta: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> None:
+        """始终写入可选属性; BadNets/Batman 等不读取即可."""
+        if prev_global_delta is None:
+            prev_global_delta = self._get_prev_global_delta_cpu()
+        client.prev_global_delta = prev_global_delta
 
     def _create_client(self, cid: str, round_config: ClientConfig) -> BaseClient:
         return self.client_class(
@@ -214,10 +289,34 @@ class BaseRunner:
             evaluator=self.evaluator,
         )
 
-    def _run_local_training(
-        self, selected_ids: List[str], server_payloads: Dict[str, Any], round_idx: int,
-    ) -> List[Dict[str, Any]]:
-        """遍历选中客户端, 调用 client.step() 完成本地训练."""
+    def _default_model_params_for_client(self, cid: str) -> Dict[str, Any]:
+        """子类可覆盖以提供 per-client 模型超参 (如 HFL capability p)."""
+        return {}
+
+    def _build_client_job_specs(
+        self,
+        selected_ids: List[str],
+        client_config: ClientConfig,
+        round_idx: int,
+    ) -> Dict[str, Dict[str, Any]]:
+        """构建可序列化的客户端任务规格, 供 Ray Worker 重建 Client."""
+        client_cls_spec = serialize_client_class(self.client_class)
+        specs: Dict[str, Dict[str, Any]] = {}
+        for cid in selected_ids:
+            spec: Dict[str, Any] = {
+                "kind": "benign",
+                "client_class": client_cls_spec,
+                "round_idx": round_idx,
+            }
+            model_params = self._default_model_params_for_client(cid)
+            if model_params:
+                spec["model_params"] = model_params
+            specs[cid] = spec
+        return specs
+
+    def _prepare_local_training(
+        self, round_idx: int,
+    ) -> tuple[ClientConfig, float]:
         client_config = ClientConfig.from_dict(self.config.get("client", {}))
         training_conf = self.config["training"]
         total_rounds = training_conf["rounds"]
@@ -228,11 +327,31 @@ class BaseRunner:
             round_idx=round_idx, total_rounds=total_rounds,
         )
         client_config.trainer_config.lr = lr
+        return client_config, lr
+
+    def _run_local_training(
+        self, selected_ids: List[str], server_payloads: Dict[str, Any], round_idx: int,
+    ) -> List[Dict[str, Any]]:
+        """本地训练: Ray 并行或串行回退."""
+        client_config, lr = self._prepare_local_training(round_idx)
+        prev_global_delta = self._get_prev_global_delta_cpu()
+
+        if self._train_executor is not None:
+            job_specs = self._build_client_job_specs(selected_ids, client_config, round_idx)
+            updates = self._train_executor.train_round(
+                selected_ids=selected_ids,
+                global_state=self.server.global_model.state_dict(),
+                client_config=client_config,
+                round_idx=round_idx,
+                job_specs=job_specs,
+                prev_global_delta=prev_global_delta,
+            )
+            return updates, lr
 
         updates: List[Dict[str, Any]] = []
-
         for cid in selected_ids:
-            client  = self._create_client(cid, client_config)
+            client = self._create_client(cid, client_config)
+            self._inject_prev_global_delta(client, prev_global_delta)
             payload = client.step(server_payloads[cid])
             updates.append(payload)
             del client

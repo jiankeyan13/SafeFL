@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - override /algorithm: fedavg
+  - override /attack: neurotoxin
+
+experiment_name: fedavg_neurotoxin

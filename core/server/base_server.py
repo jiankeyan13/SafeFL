@@ -46,6 +46,8 @@ class BaseServer:
         self.screener = screener or BaseScreener()
         self.aggregator = aggregator or AvgAggregator()
         self.refiner = refiner or BaseRefiner()
+        # 上一轮聚合得到的全局 delta, 供需要的攻击策略按需读取 (如 LGA)
+        self.last_aggregated_delta: Optional[Dict[str, torch.Tensor]] = None
 
     def select_clients(self, client_ids: List[str], num_select: int) -> List[str]:
         """
@@ -129,6 +131,12 @@ class BaseServer:
             device=self.device,
             context=context,
         )
+
+        # 缓存本轮聚合 delta, 作为下一轮攻击对齐参考 (不需要的策略可忽略)
+        self.last_aggregated_delta = {
+            k: v.detach().clone() for k, v in aggregated_delta.items()
+            if torch.is_tensor(v)
+        }
 
     def eval(
         self,

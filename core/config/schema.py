@@ -314,6 +314,40 @@ class DataConfig:
 
 
 @dataclass
+class ParallelConfig:
+    """客户端本地训练并行配置 (Ray / 串行)."""
+
+    backend: str = "ray"
+    gpu_ids: List[int] = field(default_factory=list)
+    actors_per_gpu: int = 1
+
+    def __post_init__(self) -> None:
+        self.backend = str(self.backend).lower().strip()
+        if self.backend not in {"ray", "sequential"}:
+            raise ValueError(f"parallel.backend 必须是 ray 或 sequential, 当前为 {self.backend}")
+        self.actors_per_gpu = max(1, int(self.actors_per_gpu))
+        self.gpu_ids = [int(x) for x in self.gpu_ids]
+
+    @classmethod
+    def from_dict(cls, config_dict: Optional[Dict[str, Any]]) -> "ParallelConfig":
+        if not config_dict:
+            return cls()
+        gpu_ids = config_dict.get("gpu_ids", []) or []
+        return cls(
+            backend=config_dict.get("backend", "ray"),
+            gpu_ids=list(gpu_ids),
+            actors_per_gpu=int(config_dict.get("actors_per_gpu", 1)),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "backend": self.backend,
+            "gpu_ids": list(self.gpu_ids),
+            "actors_per_gpu": self.actors_per_gpu,
+        }
+
+
+@dataclass
 class GlobalConfig:
     """全局配置聚合类"""
 
@@ -329,6 +363,7 @@ class GlobalConfig:
     algorithm: Dict[str, Any] = field(default_factory=lambda: {"name": "fedavg", "params": {}})
     logger_config: LoggerConfig = field(default_factory=LoggerConfig)
     attack: AttackConfig = field(default_factory=lambda: AttackConfig(enabled=False))
+    parallel: ParallelConfig = field(default_factory=ParallelConfig)
 
     def __post_init__(self) -> None:
         self._sync_seed()
@@ -356,6 +391,8 @@ class GlobalConfig:
             instance.logger_config = LoggerConfig.from_dict(config_dict)
         if "attack" in config_dict:
             instance.attack = AttackConfig.from_dict(config_dict["attack"])
+        if "parallel" in config_dict:
+            instance.parallel = ParallelConfig.from_dict(config_dict["parallel"])
 
         for key, value in config_dict.items():
             if key in ["experiment_name", "device", "seed"]:
@@ -415,6 +452,7 @@ class GlobalConfig:
                     for strategy in self.attack.strategies
                 ],
             },
+            "parallel": self.parallel.to_dict(),
         }
 
     @property

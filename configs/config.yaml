@@ -13,6 +13,11 @@ experiment_name: ${algorithm.name}
 device: cuda
 seed: 42
 
+parallel:
+  backend: ray
+  gpu_ids: []
+  actors_per_gpu: 1
+
 hydra:
   job:
     chdir: false

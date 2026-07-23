@@ -16,7 +16,7 @@ training:
     enabled: true
     name: warmup_cosine
     warmup_ratio: 0.1
-    min_lr: 1.0e-5
+    min_lr: 5.0e-5
     warmup_start_lr: 0.0
 
 attack:

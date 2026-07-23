@@ -10,7 +10,7 @@ from .base_aggregator import BaseAggregator
 @AGGREGATOR_REGISTRY.register("lockdown")
 class LockdownAggregator(BaseAggregator):
     """
-    FedAvg over sparse Lockdown deltas plus consensus-mask construction.
+    Uniform averaging over sparse Lockdown deltas plus consensus-mask construction.
     """
 
     def __init__(self, device="cuda", theta: Optional[int] = None, theta_ratio: Optional[float] = None):
@@ -32,14 +32,14 @@ class LockdownAggregator(BaseAggregator):
 
         context = context or {}
         num_clients = len(updates)
-        if sample_weights is None:
-            sample_weights = [1.0] * num_clients
         if screen_scores is None:
             screen_scores = [1.0] * num_clients
 
-        combined_weights = [s * sc for s, sc in zip(sample_weights, screen_scores)]
-        self._check_inputs(updates, combined_weights)
-        norm_weights = self._normalize_weights(combined_weights)
+        # Lockdown uses an equal client average. ``sample_weights`` remains in the
+        # common aggregator interface, but must not affect this algorithm.
+        uniform_weights = [1.0 if float(score) > 0.0 else 0.0 for score in screen_scores]
+        self._check_inputs(updates, uniform_weights)
+        norm_weights = self._normalize_weights(uniform_weights)
 
         cleaned_updates = [
             {
