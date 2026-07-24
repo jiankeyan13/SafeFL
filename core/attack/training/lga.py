@@ -79,7 +79,7 @@ class LGAAttack:
         self,
         target_label: int = 0,
         poison_ratio: float = 0.5,
-        patch_size: int = 3,
+        patch_size: int = 5,
         patch_value: float = 1.0,
         patch_location: str = "bottom_right",
         seed: Optional[int] = None,

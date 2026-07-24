@@ -4,3 +4,4 @@ data:
   dataset: cifar10
   root: ./data_source
   enable_proxy: false
+  use_aug: false

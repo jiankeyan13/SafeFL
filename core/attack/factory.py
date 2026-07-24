@@ -13,14 +13,14 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     "badnets": {
         "target_label": 0,
         "poison_ratio": 0.5,
-        "patch_size": 3,
+        "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
     },
     "badnets_dual": {
         "target_label": 0,
         "poison_ratio": 0.5,
-        "patch_size": 3,
+        "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
         "delta_log_interval": 15,
@@ -30,7 +30,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     "batman": {
         "target_label": 0,
         "poison_ratio": 0.5,
-        "patch_size": 3,
+        "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
         "rank": 4,
@@ -48,14 +48,14 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     "lga": {
         "target_label": 0,
         "poison_ratio": 0.5,
-        "patch_size": 3,
+        "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
     },
     "neurotoxin": {
         "target_label": 0,
         "poison_ratio": 0.5,
-        "patch_size": 3,
+        "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
         "mask_ratio": 0.05,
@@ -63,7 +63,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     "pgd": {
         "target_label": 0,
         "poison_ratio": 0.5,
-        "patch_size": 3,
+        "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
         "epsilon": 5.0,
@@ -71,7 +71,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     "chameleon": {
         "target_label": 0,
         "poison_ratio": 0.5,
-        "patch_size": 3,
+        "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
         "adaptation_epochs": 10,
@@ -84,7 +84,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     "lp": {
         "target_label": 0,
         "poison_ratio": 0.5,
-        "patch_size": 3,
+        "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
         "tau": 0.8,

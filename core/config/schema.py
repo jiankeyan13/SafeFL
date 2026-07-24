@@ -290,12 +290,13 @@ class DataConfig:
     dataset: str = "cifar10"
     root: str = "./data_source"
     enable_proxy: bool = False
+    use_aug: bool = False
     partitioner: PartitionerConfig = field(default_factory=PartitionerConfig)
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "DataConfig":
         kwargs = {}
-        for key in ["dataset", "root", "enable_proxy"]:
+        for key in ["dataset", "root", "enable_proxy", "use_aug"]:
             if key in config_dict:
                 kwargs[key] = config_dict[key]
 
@@ -418,6 +419,7 @@ class GlobalConfig:
                 "root": self.data.root,
                 "num_clients": self.training.num_clients,
                 "enable_proxy": self.data.enable_proxy,
+                "use_aug": self.data.use_aug,
                 "partitioner": {"name": self.data.partitioner.name, "params": self.data.partitioner.params},
             },
             "training": self.training.to_dict(),

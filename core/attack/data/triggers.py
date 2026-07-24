@@ -10,14 +10,14 @@ class PatchTrigger(nn.Module):
     继承 nn.Module, 与 torchvision.transforms 组合使用。
     """
     def __init__(self, 
-                 patch_size: int = 3, 
+                 patch_size: int = 5, 
                  patch_value: Union[float, Tuple[float, float, float]] = 1.0, 
                  location: str = 'bottom_right'):
         """
         Args:
             patch_size: 方块的边长 (像素)。
-            patch_value: 像素值 (0.0 for black, 1.0 for white)。
-                         对于多通道图像，可以是一个元组。
+            patch_value: 贴在已 Normalize 后的 tensor 上的像素值.
+                         在 Normalize((0.5,)*3, (0.5,)*3) 下, 1.0 为白, -1.0 为黑.
             location: 'bottom_right', 'bottom_left', 'top_right', 'top_left'。
         """
         super().__init__()

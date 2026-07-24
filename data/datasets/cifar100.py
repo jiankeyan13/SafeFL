@@ -6,9 +6,9 @@ from core.utils.mmap_dataset import MemoryMappedDataset
 from data.dataset_store import DatasetStore
 from data.registry import dataset_registry
 
-# CIFAR100 常用归一化参数 (与官方统计一致)
-CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
-CIFAR100_STD = (0.2675, 0.2565, 0.2761)
+# 与 CIFAR10 / 官方 BadNets 常用设定一致: Normalize(0.5) 后 pixel=1 即为白块
+CIFAR100_MEAN = (0.5, 0.5, 0.5)
+CIFAR100_STD = (0.5, 0.5, 0.5)
 
 _base_transform = transforms.Compose([
     transforms.ToTensor(),

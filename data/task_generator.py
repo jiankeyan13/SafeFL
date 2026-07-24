@@ -22,7 +22,7 @@ class TaskGenerator:
     """
     数据管道的核心控制器。
     职责：
-    1. 加载三个数据源 (TrainAug, TrainPlain, TestPlain)。
+    1. 加载训练/测试数据源 (可选 TrainAug, 以及 TrainPlain, TestPlain)。
     2. 调用 Partitioner 进行逻辑划分。
     3. 组装最终的 TaskSet (客户端全量数据用于训练)。
     """
@@ -34,6 +34,7 @@ class TaskGenerator:
         num_clients: int,
         seed: int = 42,
         enable_proxy: bool = False,
+        use_aug: bool = False,
     ):
         """
         Args:
@@ -43,17 +44,22 @@ class TaskGenerator:
             num_clients: 客户端数量。
             seed: 随机种子。
             enable_proxy: 为 True 时从训练集按类划出 proxy 样本 (每类 10 条) 并创建 SPLIT_PROXY 任务; 为 False 时不划样本、无 proxy 任务。
+            use_aug: 为 True 时客户端训练使用带增强的 train_aug; 默认 False 使用 train_plain。
         """
         self.dataset_name = dataset_name
         self.root = root
         self.partitioner = partitioner
         self.num_clients = num_clients
         self.enable_proxy = enable_proxy
+        self.use_aug = bool(use_aug)
         self.rng = np.random.default_rng(seed)
 
         # 预加载数据源容器
         # 结构: { "tag_name": DatasetStore }
         self.stores: Dict[str, DatasetStore] = {}
+
+    def _train_tag(self) -> str:
+        return train_aug_tag(self.dataset_name) if self.use_aug else train_plain_tag(self.dataset_name)
 
     def generate(self) -> Tuple[TaskSet, Dict[str, DatasetStore]]:
         """
@@ -120,7 +126,7 @@ class TaskGenerator:
 
             final_task_set.add_task(Task(
                 owner_id=owner,
-                dataset_tag=train_aug_tag(self.dataset_name),
+                dataset_tag=self._train_tag(),
                 split=SPLIT_TRAIN,
                 indices=all_indices.tolist(),
             ))
@@ -145,11 +151,12 @@ class TaskGenerator:
             ))
 
     def _load_sources(self) -> None:
-        """内部方法: 根据命名约定加载三个数据源。"""
+        """内部方法: 根据命名约定加载数据源。use_aug=False 时不加载 train_aug。"""
         sources_config = [
-            (train_aug_tag(self.dataset_name), True),
             (train_plain_tag(self.dataset_name), True),
             (test_plain_tag(self.dataset_name), False),
         ]
+        if self.use_aug:
+            sources_config.insert(0, (train_aug_tag(self.dataset_name), True))
         for full_tag, is_train in sources_config:
             self.stores[full_tag] = dataset_registry.build(full_tag, self.root, is_train)
