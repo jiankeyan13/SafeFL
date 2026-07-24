@@ -319,7 +319,7 @@ class ParallelConfig:
 
     backend: str = "ray"
     gpu_ids: List[int] = field(default_factory=list)
-    actors_per_gpu: int = 1
+    actors_per_gpu: int = 20
 
     def __post_init__(self) -> None:
         self.backend = str(self.backend).lower().strip()
@@ -336,7 +336,7 @@ class ParallelConfig:
         return cls(
             backend=config_dict.get("backend", "ray"),
             gpu_ids=list(gpu_ids),
-            actors_per_gpu=int(config_dict.get("actors_per_gpu", 1)),
+            actors_per_gpu=int(config_dict.get("actors_per_gpu", 20)),
         )
 
     def to_dict(self) -> Dict[str, Any]:

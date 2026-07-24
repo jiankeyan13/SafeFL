@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import random
 from typing import Any, Dict, List, Set, Optional
 
@@ -7,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader, Subset
 
 from core.attack import build_attack
+from core.attack.upload.lp import append_layer_selection_record
 from core.client.malicious_client import MaliciousClient
 from core.simulation.base_runner import BaseRunner
 from core.config import AttackStrategyConfig, ClientConfig, apply_malicious_epochs_override
@@ -26,6 +28,7 @@ class Runner(BaseRunner):
         self.client_attack_map: Dict[str, Any] = {}
         self.client_strategy_map: Dict[str, AttackStrategyConfig] = {}
         self.poisoned_eval_loader: Optional[DataLoader] = None
+        self._lp_layer_log_path: Optional[str] = None
         super()._setup()
         if self.attack_config.enabled:
             self._setup_attack()
@@ -88,6 +91,53 @@ class Runner(BaseRunner):
             f"Attack enabled: {len(self.malicious_client_ids)} malicious clients, "
             f"strategies: {[s.name for s in self.attack_config.strategies]}, "
             f"malicious ids: {sorted(list(self.malicious_client_ids))}"
+        )
+        self._setup_lp_layer_logging()
+
+    def _setup_lp_layer_logging(self) -> None:
+        """Centralize LP BC layer selection logs under the experiment run directory."""
+        if not any(s.name == "lp" for s in self.attack_config.strategies):
+            self._lp_layer_log_path = None
+            return
+        self._lp_layer_log_path = os.path.join(self.logger.run_dir, "lp_selected_layers.jsonl")
+        self.logger.info(f"LP BC layer selection log: {self._lp_layer_log_path}")
+
+    def _record_lp_layer_selections(
+        self,
+        updates: List[Dict[str, Any]],
+        round_idx: int,
+    ) -> None:
+        if not self._lp_layer_log_path:
+            return
+
+        records: List[Dict[str, Any]] = []
+        for update in updates:
+            record = update.get("layer_selection")
+            if isinstance(record, dict):
+                records.append(record)
+
+        if not records:
+            return
+
+        for record in records:
+            append_layer_selection_record(self._lp_layer_log_path, record)
+            self.logger.info(
+                f"LP layer selection round={record.get('round')} "
+                f"client={record.get('client_id')} "
+                f"num={record.get('num_selected', 0)} "
+                f"bsr={float(record.get('bsr_malicious', 0.0)):.4f} "
+                f"layers={record.get('selected_layers', [])}"
+            )
+
+        avg_num = sum(int(r.get("num_selected", 0)) for r in records) / len(records)
+        avg_bsr = sum(float(r.get("bsr_malicious", 0.0)) for r in records) / len(records)
+        self.logger.log_metrics(
+            {
+                "attack/lp_num_selections": float(len(records)),
+                "attack/lp_avg_num_bc_layers": float(avg_num),
+                "attack/lp_avg_bsr_malicious": float(avg_bsr),
+            },
+            step=round_idx,
         )
 
     def _build_client_job_specs(
@@ -224,6 +274,7 @@ class Runner(BaseRunner):
                 selected_ids = self._select_clients(round_idx)
                 server_payloads = self.server.broadcast(selected_ids)
                 updates, round_lr = self._run_local_training(selected_ids, server_payloads, round_idx)
+                self._record_lp_layer_selections(updates, round_idx)
                 self.server.step(updates, proxy_loader=self.proxy_loader)
 
                 train_metrics = self._aggregate_train_metrics(updates)

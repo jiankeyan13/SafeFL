@@ -3,6 +3,6 @@ params:
   screener:
     params:
       # n=20 (clients_fraction=0.2). True malicious per round ~4.
-      # f matches expected malicious count; m = n - f (Blanchard default).
+      # f matches expected malicious count; m slightly below n - f.
       f: 4
-      m: 16
+      m: 15
