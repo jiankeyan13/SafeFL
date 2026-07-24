@@ -12,7 +12,7 @@ client:
   lr: 0.1
 
 training:
-  clients_fraction: 0.2
+  clients_fraction: 0.1
   lr_schedule:
     enabled: true
     name: warmup_cosine
@@ -22,8 +22,8 @@ training:
 
 attack:
   enabled: true
-  malicious_fraction: 0.2
-  per_round_fraction: 0.2
+  malicious_fraction: 0.1
+  per_round_fraction: 0.1
   strategies:
     - name: batman
       fraction: 1.0

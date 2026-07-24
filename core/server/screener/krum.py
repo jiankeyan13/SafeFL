@@ -45,9 +45,9 @@ class KrumScreener(BaseScreener):
             vectors.append(torch.cat(flat_params) if flat_params else torch.tensor([]))
         
         vec_stack = torch.stack(vectors)
-        dists = torch.cdist(vec_stack, vec_stack, p=2)
+        dists = torch.cdist(vec_stack, vec_stack, p=2).pow(2)
         
-        # 计算 Krum Score
+        # 计算 Krum Score (基于平方欧式距离)
         k = max(n - self.f - 2, 1)
         krum_scores = []
         for i in range(n):

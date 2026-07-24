@@ -35,7 +35,7 @@ def _compute_server_delta(
     model: nn.Module,
     proxy_loader: DataLoader,
     device: torch.device,
-    lr: float = 0.01,
+    lr: float = 0.1,
     momentum: float = 0.9,
     weight_decay: float = 5e-4,
     epochs: int = 1,
@@ -43,6 +43,7 @@ def _compute_server_delta(
     """
     在 proxy 数据上微调模型, 计算 server reference update delta_0.
     键集合与客户端 delta 一致. 微调后恢复原模型状态, 不改变全局模型.
+    超参应与客户端 ModelUpdate 对齐 (论文 Algorithm 1/2).
     """
     keys = _get_delta_keys(model.state_dict())
     full_initial = {k: v.clone() for k, v in model.state_dict().items()}
@@ -80,7 +81,7 @@ class FLTrustScreener(BaseScreener):
 
     def __init__(
         self,
-        lr: float = 0.01,
+        lr: float = 0.1,
         momentum: float = 0.9,
         weight_decay: float = 5e-4,
         epochs: int = 1,
@@ -110,12 +111,15 @@ class FLTrustScreener(BaseScreener):
         if proxy_loader is None:
             raise ValueError("FLTrust requires proxy_loader in context; none provided.")
 
+        # 优先使用本轮调度后的 client_lr, 与客户端本地训练保持一致
+        lr = float(context.get("client_lr", self.lr))
+
         device = next(global_model.parameters()).device
         delta_0 = _compute_server_delta(
             global_model,
             proxy_loader,
             device,
-            lr=self.lr,
+            lr=lr,
             momentum=self.momentum,
             weight_decay=self.weight_decay,
             epochs=self.epochs,
@@ -126,8 +130,18 @@ class FLTrustScreener(BaseScreener):
         raw_ref_norm = torch.norm(flat_0).item()
 
         if raw_ref_norm < 1e-6:
+            # 无有效信任锚点时拒绝本轮更新, 避免退化为无防御 FedAvg
+            zero_scores = [0.0] * n
             context["fltrust_fallback"] = "zero_reference_norm"
-            return [1.0] * n, context
+            context["reference_delta"] = delta_0
+            context["reference_norm"] = raw_ref_norm
+            context["delta_keys"] = keys
+            context["client_norms"] = [
+                torch.norm(_flatten_delta(d, keys, device)).item() for d in client_deltas
+            ]
+            context["trust_scores"] = zero_scores
+            context["server_lr"] = lr
+            return zero_scores, context
 
         ref_norm = raw_ref_norm + self.eps
         trust_scores = []
@@ -147,4 +161,5 @@ class FLTrustScreener(BaseScreener):
         context["delta_keys"] = keys
         context["client_norms"] = client_norms
         context["trust_scores"] = trust_scores
+        context["server_lr"] = lr
         return trust_scores, context

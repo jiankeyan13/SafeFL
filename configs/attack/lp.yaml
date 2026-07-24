@@ -1,6 +1,6 @@
 enabled: true
-malicious_fraction: 0.2
-per_round_fraction: 0.2
+malicious_fraction: 0.1
+per_round_fraction: 0.1
 malicious_epochs: 3
 strategies:
   - name: lp

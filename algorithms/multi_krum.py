@@ -20,7 +20,7 @@ def build_multi_krum_algorithm(
     """
     screener_params = params.get("screener", {}).get("params", params.get("screener", {}))
     f = screener_params.get("f", 0)
-    m = screener_params.get("m", 1)
+    m = screener_params.get("m", 2 * f + 2)
     screener = KrumScreener(f=f, m=m)
     aggregator = AvgAggregator()
     refiner = BaseRefiner(config=params.get("refiner", {}))

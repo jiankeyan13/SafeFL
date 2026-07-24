@@ -229,12 +229,9 @@ class LockdownClient(BaseClient):
             if name not in mask_store:
                 continue
             mask = mask_store[name].to(param.device)
-            remove_count = int(math.ceil(drop_ratio * int(mask.sum().item())))
-            if remove_count <= 0:
-                num_remove[name] = 0
-                continue
-
+            # 论文 Alg.2: numprune = α_t × layer_numel (整层), 再限制不超过当前激活数
             active_count = int(mask.sum().item())
+            remove_count = int(math.ceil(drop_ratio * mask.numel()))
             remove_count = min(remove_count, active_count)
             num_remove[name] = remove_count
             if remove_count <= 0:

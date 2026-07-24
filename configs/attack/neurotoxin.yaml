@@ -1,6 +1,6 @@
 enabled: true
-malicious_fraction: 0.2
-per_round_fraction: 0.2
+malicious_fraction: 0.1
+per_round_fraction: 0.1
 malicious_epochs: 3
 strategies:
   - name: neurotoxin
@@ -8,7 +8,7 @@ strategies:
     params:
       target_label: 0
       poison_ratio: 0.5
-      mask_ratio: 0.05
+      mask_ratio: 0.10
       patch_size: 5
       patch_value: 1.0
       patch_location: bottom_right

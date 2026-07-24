@@ -4,7 +4,6 @@ data:
   dataset: tiny_imagenet
   root: ./data_source
   enable_proxy: false
-  use_aug: false
 
 # 须在 defaults 中让 dataset 排在 model 之后, 此处才能覆盖模型的 num_classes
 model:

@@ -1,8 +1,17 @@
 """PGD-constrained model-poisoning attack for federated learning.
 
 The malicious objective is learned from a trigger-poisoned local dataset. PGD
-is the stage-2 intervention: after every optimizer step, model parameters are
-projected into an L2 ball around the round-start global model.
+is the stage-2 intervention: after the last batch of each local epoch, model
+parameters are projected into an L2 ball around the round-start global model.
+
+Threshold (epsilon):
+
+    epsilon = 0.1 * ||w_0||_2   for CIFAR-10
+    epsilon = ||w_0||_2         for other datasets
+
+If ||w_local - w_0||_2 > epsilon:
+
+    w_proj = w_0 + epsilon * (w_local - w_0) / ||w_local - w_0||_2
 """
 from __future__ import annotations
 
@@ -15,6 +24,56 @@ from torch.utils.data import Dataset
 
 from core.attack.data.badnets import BadNetsAttack
 from core.utils.registry import ATTACK_REGISTRY
+
+
+def _is_cifar10_dataset(dataset: Optional[str]) -> bool:
+    if dataset is None:
+        return False
+    return dataset.lower().strip() == "cifar10"
+
+
+def compute_parameter_l2_norm(
+    model: nn.Module,
+    state: Mapping[str, torch.Tensor],
+) -> float:
+    """Return the L2 norm of trainable parameters in ``state``."""
+    squared_norm: Optional[torch.Tensor] = None
+    for name, parameter in model.named_parameters():
+        reference = state.get(name)
+        if reference is None or not torch.is_tensor(reference):
+            raise KeyError(f"state is missing trainable parameter '{name}'")
+        if reference.shape != parameter.shape:
+            raise ValueError(
+                f"shape mismatch for '{name}': model={tuple(parameter.shape)}, "
+                f"state={tuple(reference.shape)}"
+            )
+        value = reference.detach().to(device=parameter.device, dtype=torch.float64)
+        term = value.square().sum()
+        squared_norm = term if squared_norm is None else squared_norm + term
+    if squared_norm is None:
+        return 0.0
+    return float(squared_norm.sqrt().item())
+
+
+def resolve_pgd_epsilon(
+    model: nn.Module,
+    global_state: Mapping[str, torch.Tensor],
+    dataset: Optional[str] = None,
+    cifar10_epsilon_scale: float = 0.1,
+    default_epsilon_scale: float = 1.0,
+) -> float:
+    """Compute PGD radius from ||w_0||_2 and dataset-specific scaling."""
+    if not math.isfinite(cifar10_epsilon_scale) or cifar10_epsilon_scale < 0.0:
+        raise ValueError(
+            f"cifar10_epsilon_scale must be finite and >= 0, got {cifar10_epsilon_scale}"
+        )
+    if not math.isfinite(default_epsilon_scale) or default_epsilon_scale < 0.0:
+        raise ValueError(
+            f"default_epsilon_scale must be finite and >= 0, got {default_epsilon_scale}"
+        )
+    w0_norm = compute_parameter_l2_norm(model, global_state)
+    scale = cifar10_epsilon_scale if _is_cifar10_dataset(dataset) else default_epsilon_scale
+    return scale * w0_norm
 
 
 @torch.no_grad()
@@ -77,11 +136,11 @@ class PGDAttack:
         patch_size: int = 5,
         patch_value: float = 1.0,
         patch_location: str = "bottom_right",
-        epsilon: float = 5.0,
+        dataset: Optional[str] = None,
+        cifar10_epsilon_scale: float = 0.1,
+        default_epsilon_scale: float = 1.0,
         seed: Optional[int] = None,
     ) -> None:
-        if not math.isfinite(epsilon) or epsilon < 0.0:
-            raise ValueError(f"epsilon must be finite and >= 0, got {epsilon}")
         self._badnets = BadNetsAttack(
             target_label=target_label,
             poison_ratio=poison_ratio,
@@ -92,7 +151,9 @@ class PGDAttack:
         )
         self.target_label = target_label
         self.poison_ratio = poison_ratio
-        self.epsilon = float(epsilon)
+        self.dataset = dataset
+        self.cifar10_epsilon_scale = float(cifar10_epsilon_scale)
+        self.default_epsilon_scale = float(default_epsilon_scale)
         self.seed = seed
 
     def poison_dataset(
@@ -118,7 +179,14 @@ class PGDAttack:
         model: nn.Module,
         global_state: Mapping[str, torch.Tensor],
     ) -> Tuple[float, float]:
-        return project_model_l2_(model, global_state, self.epsilon)
+        epsilon = resolve_pgd_epsilon(
+            model,
+            global_state,
+            dataset=self.dataset,
+            cifar10_epsilon_scale=self.cifar10_epsilon_scale,
+            default_epsilon_scale=self.default_epsilon_scale,
+        )
+        return project_model_l2_(model, global_state, epsilon)
 
 
 from core.client.pgd_client import PGDClient  # noqa: E402

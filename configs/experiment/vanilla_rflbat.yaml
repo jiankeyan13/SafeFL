@@ -1,7 +1,7 @@
 # @package _global_
 defaults:
-  - override /algorithm: fedavg
-  - override /attack: badnets_dual
+  - override /algorithm: rflbat
+  - override /attack: badnets
   - override /model: resnet18
   - override /dataset: cifar10
 
@@ -20,19 +20,14 @@ training:
     min_lr: 5.0e-5
     warmup_start_lr: 0.0
 
-parallel:
-  actors_per_gpu: 10
-
 attack:
   enabled: true
   malicious_fraction: 0.1
   per_round_fraction: 0.1
   strategies:
-    - name: badnets_dual
+    - name: badnets
       fraction: 1.0
-      params:
-        delta_log_interval: 15
-        delta_log_enabled: true
+      params: {}
 
 logging:
   use_wandb: true

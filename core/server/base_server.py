@@ -76,7 +76,12 @@ class BaseServer:
         
         return package
 
-    def step(self, updates: List[Dict[str, Any]], proxy_loader: Optional[DataLoader] = None):
+    def step(
+        self,
+        updates: List[Dict[str, Any]],
+        proxy_loader: Optional[DataLoader] = None,
+        client_lr: Optional[float] = None,
+    ):
         """
         [核心防御流水线] 筛选 -> 聚合 -> Base+Delta 合成 -> 后处理。
         context 用于在各阶段之间传递信息。
@@ -85,11 +90,14 @@ class BaseServer:
             updates: 客户端上传的 payload 列表，每项须包含 'delta' 与 'num_samples'。
                 delta 可与客户端一致地包含 BN 统计量 buffer 的差分。
             proxy_loader: 可选的代理数据加载器，用于 BN 校准等后处理。
+            client_lr: 本轮客户端实际学习率 (含 schedule), FLTrust 等防御用于对齐 server update.
         """
         context = {
             "proxy_loader": proxy_loader,
             "client_ids": [up.get("client_id") for up in updates],
         }
+        if client_lr is not None:
+            context["client_lr"] = float(client_lr)
         num_samples = [up['num_samples'] for up in updates]
         client_deltas = [up['delta'] for up in updates]
         

@@ -2,7 +2,7 @@
 training:
   num_clients: 100
   rounds: 150
-  clients_fraction: 0.2
+  clients_fraction: 0.1
   lr_schedule:
     enabled: true
     name: warmup_cosine

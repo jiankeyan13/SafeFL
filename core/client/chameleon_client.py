@@ -34,7 +34,8 @@ class ChameleonClient(MaliciousClient):
         return optimizer_class(param_list, **kwargs)
 
     def _maybe_clip_grad(self, parameters: List[nn.Parameter]) -> None:
-        max_norm = self.config.trainer_config.grad_clip_norm
+        # TrainerConfig may omit grad_clip_norm after it was dropped from defaults.
+        max_norm = getattr(self.config.trainer_config, "grad_clip_norm", None)
         if max_norm is None or max_norm <= 0:
             return
         torch.nn.utils.clip_grad_norm_(parameters, max_norm)

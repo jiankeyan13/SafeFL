@@ -7,7 +7,7 @@ from core.client.malicious_client import MaliciousClient
 
 
 class PGDClient(MaliciousClient):
-    """Project malicious local parameters after every optimizer update."""
+    """Project malicious local parameters after the last batch of each local epoch."""
 
     def train(self) -> Dict[str, Any]:
         self.model.train()
@@ -22,6 +22,7 @@ class PGDClient(MaliciousClient):
 
         total_loss = 0.0
         total_samples = 0
+        num_batches = len(self.train_loader)
         for epoch_idx in range(local_epochs):
             for batch_idx, (data, target) in enumerate(self.train_loader):
                 data = data.to(self.device, non_blocking=True)
@@ -49,6 +50,8 @@ class PGDClient(MaliciousClient):
 
                 if not skip_step:
                     optimizer.step()
+
+                if num_batches > 0 and batch_idx == num_batches - 1:
                     project_fn(self.model, initial_state)
 
                 total_loss += float(loss_val.detach().item()) * target.size(0)

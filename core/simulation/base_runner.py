@@ -123,7 +123,6 @@ class BaseRunner:
             num_clients=self.training_config.num_clients,
             seed=self.seed,
             enable_proxy=self.data_config.enable_proxy,
-            use_aug=self.data_config.use_aug,
         )
         self.task_set, self.dataset_stores = generator.generate()
 
@@ -241,7 +240,7 @@ class BaseRunner:
                 updates, round_lr = self._run_local_training(selected_ids, server_payloads, round_idx)
 
                 # 4. 服务端聚合
-                self.server.step(updates, proxy_loader=self.proxy_loader)
+                self.server.step(updates, proxy_loader=self.proxy_loader, client_lr=round_lr)
 
                 # 5. 训练指标汇总并记录
                 train_metrics = self._aggregate_train_metrics(updates)

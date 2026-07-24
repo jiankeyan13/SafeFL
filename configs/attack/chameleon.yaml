@@ -1,6 +1,6 @@
 enabled: true
-malicious_fraction: 0.2
-per_round_fraction: 0.2
+malicious_fraction: 0.1
+per_round_fraction: 0.1
 # Chameleon uses adaptation_epochs / projection_epochs in strategy params.
 # Keep malicious_epochs unset so it does not override the two-stage schedule.
 strategies:
@@ -13,6 +13,6 @@ strategies:
       patch_value: 1.0
       patch_location: bottom_right
       adaptation_epochs: 10
-      projection_epochs: 5
+      projection_epochs: 3
       fac_scale_weight: 2.0
       temperature: 0.07

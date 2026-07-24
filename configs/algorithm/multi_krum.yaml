@@ -2,7 +2,7 @@ name: multi_krum
 params:
   screener:
     params:
-      # n=20 (clients_fraction=0.2). True malicious per round ~4.
-      # f matches expected malicious count; m slightly below n - f.
-      f: 4
-      m: 15
+      # n=10 (clients_fraction=0.1). True malicious per round ~1.
+      # f matches expected malicious count; m = 2f + 2.
+      f: 1
+      m: 4

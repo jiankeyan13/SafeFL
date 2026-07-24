@@ -1,8 +1,9 @@
 """Neurotoxin: durable backdoors in federated learning.
 
-The attack avoids coordinates that are most active in the previous global
-update. Backdoor training is therefore pushed into parameters that benign
-training is less likely to overwrite in following rounds.
+Before poisoned local training, the malicious client runs one forward-backward
+step on a clean local batch and ranks parameters by gradient magnitude. The
+top ``mask_ratio`` coordinates are masked so backdoor updates concentrate on
+parameters that benign training is less likely to overwrite in following rounds.
 """
 from __future__ import annotations
 
@@ -16,27 +17,49 @@ from core.attack.data.badnets import BadNetsAttack
 from core.utils.registry import ATTACK_REGISTRY
 
 
+def compute_clean_batch_gradients(
+    model: nn.Module,
+    data: torch.Tensor,
+    target: torch.Tensor,
+    loss_fn: nn.Module,
+) -> Dict[str, torch.Tensor]:
+    """Run one clean batch and return per-parameter gradients."""
+    was_training = model.training
+    model.train()
+    model.zero_grad(set_to_none=True)
+    output = model(data)
+    loss = loss_fn(output, target)
+    loss.backward()
+    gradients: Dict[str, torch.Tensor] = {}
+    for name, parameter in model.named_parameters():
+        if parameter.grad is not None:
+            gradients[name] = parameter.grad.detach().clone()
+    model.zero_grad(set_to_none=True)
+    model.train(was_training)
+    return gradients
+
+
 @torch.no_grad()
 def build_neurotoxin_masks(
     model: nn.Module,
-    reference_update: Optional[Mapping[str, torch.Tensor]],
+    reference_gradients: Optional[Mapping[str, torch.Tensor]],
     mask_ratio: float,
 ) -> Dict[str, torch.Tensor]:
     """Build global top-k masks keyed by ``model.named_parameters()``.
 
     A zero suppresses that gradient coordinate. Only trainable parameters
-    present in ``reference_update`` participate in the global ranking;
+    present in ``reference_gradients`` participate in the global ranking;
     buffers and missing/incompatible entries are ignored.
     """
     if not 0.0 <= mask_ratio <= 1.0:
         raise ValueError(f"mask_ratio must be in [0, 1], got {mask_ratio}")
-    if reference_update is None or mask_ratio == 0.0:
+    if reference_gradients is None or mask_ratio == 0.0:
         return {}
 
     entries = []
     flat_scores = []
     for name, parameter in model.named_parameters():
-        reference = reference_update.get(name)
+        reference = reference_gradients.get(name)
         if (
             not parameter.requires_grad
             or not torch.is_tensor(reference)
@@ -82,7 +105,7 @@ class NeurotoxinAttack:
         patch_size: int = 5,
         patch_value: float = 1.0,
         patch_location: str = "bottom_right",
-        mask_ratio: float = 0.05,
+        mask_ratio: float = 0.10,
         seed: Optional[int] = None,
     ) -> None:
         if not 0.0 <= mask_ratio <= 1.0:
@@ -122,12 +145,12 @@ class NeurotoxinAttack:
     def prepare_gradient_mask(
         self,
         model: nn.Module,
-        previous_global_delta: Optional[Mapping[str, torch.Tensor]],
+        reference_gradients: Optional[Mapping[str, torch.Tensor]],
     ) -> None:
         """Prepare one fixed mask for all malicious local steps this round."""
         self._gradient_masks = build_neurotoxin_masks(
             model=model,
-            reference_update=previous_global_delta,
+            reference_gradients=reference_gradients,
             mask_ratio=self.mask_ratio,
         )
 

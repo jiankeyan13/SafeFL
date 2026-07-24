@@ -16,8 +16,8 @@ class PatchTrigger(nn.Module):
         """
         Args:
             patch_size: 方块的边长 (像素)。
-            patch_value: 贴在已 Normalize 后的 tensor 上的像素值.
-                         在 Normalize((0.5,)*3, (0.5,)*3) 下, 1.0 为白, -1.0 为黑.
+            patch_value: 像素值 (0.0 for black, 1.0 for white)。
+                         对于多通道图像，可以是一个元组。
             location: 'bottom_right', 'bottom_left', 'top_right', 'top_left'。
         """
         super().__init__()

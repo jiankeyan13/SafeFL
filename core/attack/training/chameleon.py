@@ -189,7 +189,7 @@ class ChameleonAttack:
         patch_value: float = 1.0,
         patch_location: str = "bottom_right",
         adaptation_epochs: int = 10,
-        projection_epochs: Optional[int] = 5,
+        projection_epochs: Optional[int] = 3,
         fac_scale_weight: float = 2.0,
         temperature: float = 0.07,
         adaptation_lr: Optional[float] = None,

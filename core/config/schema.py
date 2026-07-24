@@ -108,7 +108,7 @@ class TrainingConfig:
 
     num_clients: int = 100
     rounds: int = 100
-    clients_fraction: float = 0.2
+    clients_fraction: float = 0.1
     seed: int = 42
     lr_schedule: LRScheduleConfig = field(default_factory=LRScheduleConfig)
 
@@ -178,8 +178,8 @@ class AttackConfig:
     """攻击全局配置"""
 
     enabled: bool = False
-    malicious_fraction: float = 0.2
-    per_round_fraction: float = 0.2
+    malicious_fraction: float = 0.1
+    per_round_fraction: float = 0.1
     malicious_epochs: Optional[int] = None
     strategies: List[AttackStrategyConfig] = field(default_factory=lambda: [AttackStrategyConfig()])
 
@@ -207,8 +207,8 @@ class AttackConfig:
             malicious_epochs = int(malicious_epochs)
         return cls(
             enabled=config_dict.get("enabled", False),
-            malicious_fraction=config_dict.get("malicious_fraction", 0.2),
-            per_round_fraction=config_dict.get("per_round_fraction", 0.2),
+            malicious_fraction=config_dict.get("malicious_fraction", 0.1),
+            per_round_fraction=config_dict.get("per_round_fraction", 0.1),
             malicious_epochs=malicious_epochs,
             strategies=strategies,
         )
@@ -290,13 +290,12 @@ class DataConfig:
     dataset: str = "cifar10"
     root: str = "./data_source"
     enable_proxy: bool = False
-    use_aug: bool = False
     partitioner: PartitionerConfig = field(default_factory=PartitionerConfig)
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "DataConfig":
         kwargs = {}
-        for key in ["dataset", "root", "enable_proxy", "use_aug"]:
+        for key in ["dataset", "root", "enable_proxy"]:
             if key in config_dict:
                 kwargs[key] = config_dict[key]
 
@@ -419,7 +418,6 @@ class GlobalConfig:
                 "root": self.data.root,
                 "num_clients": self.training.num_clients,
                 "enable_proxy": self.data.enable_proxy,
-                "use_aug": self.data.use_aug,
                 "partitioner": {"name": self.data.partitioner.name, "params": self.data.partitioner.params},
             },
             "training": self.training.to_dict(),

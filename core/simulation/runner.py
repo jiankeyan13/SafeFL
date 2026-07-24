@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader, Subset
 
 from core.attack import build_attack
-from core.attack.upload.lp import append_layer_selection_record
+from core.attack.upload.lp import save_layer_score_record
 from core.client.malicious_client import MaliciousClient
 from core.simulation.base_runner import BaseRunner
 from core.config import AttackStrategyConfig, ClientConfig, apply_malicious_epochs_override
@@ -28,7 +28,7 @@ class Runner(BaseRunner):
         self.client_attack_map: Dict[str, Any] = {}
         self.client_strategy_map: Dict[str, AttackStrategyConfig] = {}
         self.poisoned_eval_loader: Optional[DataLoader] = None
-        self._lp_layer_log_path: Optional[str] = None
+        self._lp_layer_score_dir: Optional[str] = None
         super()._setup()
         if self.attack_config.enabled:
             self._setup_attack()
@@ -81,6 +81,8 @@ class Runner(BaseRunner):
             end_idx = min(start_idx + count, len(malicious_list))
 
             attack_profile = build_attack(strategy)
+            if strategy.name == "pgd" and getattr(attack_profile, "dataset", None) is None:
+                attack_profile.dataset = self.data_config.dataset
             for cid in malicious_list[start_idx:end_idx]:
                 self.client_attack_map[cid] = attack_profile
                 self.client_strategy_map[cid] = strategy
@@ -95,19 +97,20 @@ class Runner(BaseRunner):
         self._setup_lp_layer_logging()
 
     def _setup_lp_layer_logging(self) -> None:
-        """Centralize LP BC layer selection logs under the experiment run directory."""
+        """Centralize LP layer-score dumps under the experiment run directory."""
         if not any(s.name == "lp" for s in self.attack_config.strategies):
-            self._lp_layer_log_path = None
+            self._lp_layer_score_dir = None
             return
-        self._lp_layer_log_path = os.path.join(self.logger.run_dir, "lp_selected_layers.jsonl")
-        self.logger.info(f"LP BC layer selection log: {self._lp_layer_log_path}")
+        self._lp_layer_score_dir = os.path.join(self.logger.run_dir, "lp_layer_scores")
+        os.makedirs(self._lp_layer_score_dir, exist_ok=True)
+        self.logger.info(f"LP layer score dir: {self._lp_layer_score_dir}")
 
     def _record_lp_layer_selections(
         self,
         updates: List[Dict[str, Any]],
         round_idx: int,
     ) -> None:
-        if not self._lp_layer_log_path:
+        if not self._lp_layer_score_dir:
             return
 
         records: List[Dict[str, Any]] = []
@@ -120,9 +123,10 @@ class Runner(BaseRunner):
             return
 
         for record in records:
-            append_layer_selection_record(self._lp_layer_log_path, record)
+            path = save_layer_score_record(self._lp_layer_score_dir, record)
             self.logger.info(
-                f"LP layer selection round={record.get('round')} "
+                f"LP layer scores saved={path} "
+                f"round={record.get('round')} "
                 f"client={record.get('client_id')} "
                 f"num={record.get('num_selected', 0)} "
                 f"bsr={float(record.get('bsr_malicious', 0.0)):.4f} "
@@ -157,6 +161,8 @@ class Runner(BaseRunner):
             if strategy is None:
                 continue
             params = dict(strategy.params)
+            if strategy.name == "pgd":
+                params.setdefault("dataset", self.data_config.dataset)
             # 将 driver 上已解析的绝对 delta_log_dir 传给 Ray worker
             attack_profile = self.client_attack_map.get(cid)
             resolved_dir = getattr(attack_profile, "delta_log_dir", None)
@@ -280,7 +286,7 @@ class Runner(BaseRunner):
                 server_payloads = self.server.broadcast(selected_ids)
                 updates, round_lr = self._run_local_training(selected_ids, server_payloads, round_idx)
                 self._record_lp_layer_selections(updates, round_idx)
-                self.server.step(updates, proxy_loader=self.proxy_loader)
+                self.server.step(updates, proxy_loader=self.proxy_loader, client_lr=round_lr)
 
                 train_metrics = self._aggregate_train_metrics(updates)
                 train_metrics["train/lr"] = round_lr

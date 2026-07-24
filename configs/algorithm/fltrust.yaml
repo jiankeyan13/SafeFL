@@ -1,11 +1,7 @@
 name: fltrust
 params:
-  screener:
-    params:
-      lr: 0.01
-      momentum: 0.9
-      weight_decay: 0.0005
-      epochs: 1
+  # screener 的 lr / momentum / weight_decay / epochs 默认从 client 配置继承,
+  # 并在每轮使用调度后的 client_lr. 仅在需要显式覆盖时填写 screener.params.
   aggregator:
     params:
       eps: 1.0e-12

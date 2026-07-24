@@ -1,10 +1,11 @@
 # @package _global_
 defaults:
   - override /algorithm: fedavg
-  - override /attack: badnets_dual
+  - override /attack: badnets
   - override /model: resnet18
   - override /dataset: cifar10
 
+# Badnets 记为 vanilla, 无防御 (FedAvg) 记为 vanilla.
 # NOTE: config.yaml 末尾的 experiment_name=${algorithm.name} 会覆盖此处,
 # 启动时需 CLI 显式传入 experiment_name / logging.name / logging.project.
 
@@ -20,19 +21,14 @@ training:
     min_lr: 5.0e-5
     warmup_start_lr: 0.0
 
-parallel:
-  actors_per_gpu: 10
-
 attack:
   enabled: true
   malicious_fraction: 0.1
   per_round_fraction: 0.1
   strategies:
-    - name: badnets_dual
+    - name: badnets
       fraction: 1.0
-      params:
-        delta_log_interval: 15
-        delta_log_enabled: true
+      params: {}
 
 logging:
   use_wandb: true
