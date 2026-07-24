@@ -14,7 +14,7 @@ class TrainerConfig:
     weight_decay: float = 5e-4
     criterion_name: str = "CrossEntropyLoss"
     epochs: int = 2
-    batch_size: int = 32
+    batch_size: int = 64
     num_workers: int = 0
     extra_params: Dict[str, Any] = field(default_factory=dict)
 
@@ -40,7 +40,7 @@ class ClientConfig:
     """配置客户端运行的基础参数"""
 
     num_workers: int = 0
-    batch_size: int = 32
+    batch_size: int = 64
     trainer_config: TrainerConfig = field(default_factory=TrainerConfig)
 
     @classmethod

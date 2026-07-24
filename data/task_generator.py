@@ -8,7 +8,6 @@ from data.constants import (
     SPLIT_TEMP_ALL,
     OWNER_SERVER,
     train_plain_tag,
-    train_aug_tag,
     test_plain_tag,
     client_owner,
 )
@@ -22,7 +21,7 @@ class TaskGenerator:
     """
     数据管道的核心控制器。
     职责：
-    1. 加载三个数据源 (TrainAug, TrainPlain, TestPlain)。
+    1. 加载 TrainPlain 与 TestPlain 数据源。
     2. 调用 Partitioner 进行逻辑划分。
     3. 组装最终的 TaskSet (客户端全量数据用于训练)。
     """
@@ -120,7 +119,7 @@ class TaskGenerator:
 
             final_task_set.add_task(Task(
                 owner_id=owner,
-                dataset_tag=train_aug_tag(self.dataset_name),
+                dataset_tag=train_plain_tag(self.dataset_name),
                 split=SPLIT_TRAIN,
                 indices=all_indices.tolist(),
             ))
@@ -145,9 +144,8 @@ class TaskGenerator:
             ))
 
     def _load_sources(self) -> None:
-        """内部方法: 根据命名约定加载三个数据源。"""
+        """内部方法: 根据命名约定加载 TrainPlain 与 TestPlain。"""
         sources_config = [
-            (train_aug_tag(self.dataset_name), True),
             (train_plain_tag(self.dataset_name), True),
             (test_plain_tag(self.dataset_name), False),
         ]

@@ -19,13 +19,8 @@ def client_owner(client_id: int) -> str:
 
 
 def train_plain_tag(dataset_name: str) -> str:
-    """训练集（无增强）store tag。"""
+    """训练集 store tag。"""
     return f"{dataset_name}_train_plain"
-
-
-def train_aug_tag(dataset_name: str) -> str:
-    """训练集（带增强）store tag。"""
-    return f"{dataset_name}_train_aug"
 
 
 def test_plain_tag(dataset_name: str) -> str:

@@ -17,5 +17,5 @@ client:
   optimizer_name: SGD
   criterion_name: CrossEntropyLoss
   epochs: 3
-  batch_size: 32
+  batch_size: 64
   num_workers: 0
