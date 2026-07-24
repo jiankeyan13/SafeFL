@@ -1,7 +1,7 @@
 """
 Batman: official BadSP / AlphaEdit alignment (upload-stage).
 
-Core action runs in poison_upload after serial clean-then-poison training.
+Core action runs in poison_upload after parallel clean/poison training.
 Alignment ops live in this file (one attack == one upload module file).
 """
 from __future__ import annotations
@@ -111,14 +111,13 @@ def select_layers_by_diff_top(
     select_len: int,
 ) -> List[str]:
     """
-    Official BadSP diff_top_name layer selection.
+    Diff-top layer selection (first round only).
 
-    May contain duplicate names (conv half-select then joint top of conv+linear).
+    Rank conv weights (ndim > 2) by normalized mean abs diff and take top-K.
+    Linear layers (ndim == 2) are not considered.
     """
     if select_len <= 0:
         return []
-    selec1 = select_len // 2
-    selec2 = select_len - selec1
     diff_mean: Dict[str, float] = {}
 
     for name, para in poisoned_state.items():
@@ -127,17 +126,8 @@ def select_layers_by_diff_top(
         if name not in global_state or not torch.is_tensor(global_state[name]):
             continue
         diff_mean[name] = _normalized_mean_abs_diff_score(para, global_state[name])
-    top_names1 = sorted(diff_mean.items(), key=lambda item: item[1], reverse=True)[:selec1]
-
-    for name, para in poisoned_state.items():
-        if not torch.is_tensor(para) or para.ndim != 2:
-            continue
-        if name not in global_state or not torch.is_tensor(global_state[name]):
-            continue
-        diff_mean[name] = _normalized_mean_abs_diff_score(para, global_state[name])
-    top_names2 = sorted(diff_mean.items(), key=lambda item: item[1], reverse=True)[:selec2]
-
-    return [key for key, _ in top_names1] + [key for key, _ in top_names2]
+    top_names = sorted(diff_mean.items(), key=lambda item: item[1], reverse=True)[:select_len]
+    return [key for key, _ in top_names]
 
 
 @torch.no_grad()
@@ -145,10 +135,10 @@ def score_layers_by_diff_top(
     poisoned_state: Mapping[str, torch.Tensor],
     global_state: Mapping[str, torch.Tensor],
 ) -> List[LayerScore]:
-    """Score ndim>=2 layers with official normalized-mean abs diff (for logging)."""
+    """Score conv layers (ndim > 2) with normalized-mean abs diff (for logging)."""
     scores: List[LayerScore] = []
     for name, para in poisoned_state.items():
-        if not torch.is_tensor(para) or para.ndim < 2:
+        if not torch.is_tensor(para) or para.ndim <= 2:
             continue
         if name not in global_state or not torch.is_tensor(global_state[name]):
             continue

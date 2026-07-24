@@ -68,6 +68,30 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "patch_location": "bottom_right",
         "epsilon": 5.0,
     },
+    "chameleon": {
+        "target_label": 0,
+        "poison_ratio": 0.1,
+        "patch_size": 3,
+        "patch_value": 1.0,
+        "patch_location": "bottom_right",
+        "adaptation_epochs": 10,
+        "projection_epochs": 5,
+        "fac_scale_weight": 2.0,
+        "temperature": 0.07,
+        "adaptation_lr": None,
+        "projection_lr": None,
+    },
+    "lp": {
+        "target_label": 0,
+        "poison_ratio": 0.1,
+        "patch_size": 3,
+        "patch_value": 1.0,
+        "patch_location": "bottom_right",
+        "tau": 0.8,
+        "val_ratio": 0.25,
+        "log_selected_layers": True,
+        "layer_selection_log_path": None,
+    },
 }
 
 

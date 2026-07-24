@@ -6,6 +6,8 @@ from core.attack.factory import build_attack
 from core.attack.data import badnets
 from core.attack.data import badnets_dual  # noqa: F401
 from core.attack.upload import batman  # noqa: F401
+from core.attack.upload import lp  # noqa: F401
+from core.attack.training import chameleon  # noqa: F401
 from core.attack.training import lga  # noqa: F401
 from core.attack.training import neurotoxin  # noqa: F401
 from core.attack.training import pgd  # noqa: F401
