@@ -70,7 +70,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     },
     "chameleon": {
         "target_label": 0,
-        "poison_ratio": 0.1,
+        "poison_ratio": 0.5,
         "patch_size": 3,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
@@ -83,7 +83,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     },
     "lp": {
         "target_label": 0,
-        "poison_ratio": 0.1,
+        "poison_ratio": 0.5,
         "patch_size": 3,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
