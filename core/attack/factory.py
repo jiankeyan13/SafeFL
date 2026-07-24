@@ -17,6 +17,14 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "patch_value": 1.0,
         "patch_location": "bottom_right",
     },
+    "dba": {
+        "target_label": 0,
+        "poison_ratio": 0.5,
+        "patch_size": 5,
+        "patch_value": 1.0,
+        "patch_location": "bottom_right",
+        "num_blocks": 4,
+    },
     "badnets_dual": {
         "target_label": 0,
         "poison_ratio": 0.5,
