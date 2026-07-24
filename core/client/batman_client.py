@@ -51,7 +51,7 @@ class BatmanClient(MaliciousClient):
         self.clean_loader = self._create_clean_train_dataloader()
 
     def _build_dataset(self, split: str) -> Optional[DatasetStore]:
-        """Poison train/val for the malicious branch; leave other splits to parent."""
+        """Poison train data for the malicious branch; leave other splits to parent."""
         return super()._build_dataset(split)
 
     def _create_clean_train_dataloader(self) -> DataLoader:

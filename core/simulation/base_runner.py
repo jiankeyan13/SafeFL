@@ -121,7 +121,6 @@ class BaseRunner:
             root=self.data_config.root,
             partitioner=partitioner,
             num_clients=self.training_config.num_clients,
-            val_ratio=self.data_config.val_ratio,
             seed=self.seed,
             enable_proxy=self.data_config.enable_proxy,
         )
@@ -223,10 +222,9 @@ class BaseRunner:
         """联邦学习主控循环. 使用 Logger Context Manager 保证 close() 必被调用."""
         training_conf = self.config["training"]
         total_rounds  = training_conf["rounds"]
-        eval_interval = self.training_config.eval_interval
 
         self.logger.info(">>> Start Training")
-        best_acc = 0.0
+        # best_acc = 0.0
 
         try:
             for round_idx in range(total_rounds):
@@ -252,16 +250,13 @@ class BaseRunner:
                 # 6. 全局评估（每轮）
                 test_metrics = self._run_global_eval(round_idx)
 
-                # 7. 本地抽样评估（按 eval_interval）
-                if round_idx % eval_interval == 0:
-                    self._run_local_eval(round_idx)
+                # # 7. 最优 Checkpoint
+                # if test_metrics.get("accuracy", 0.0) > best_acc:
+                #     best_acc = test_metrics["accuracy"]
+                #     self._save_checkpoint(round_idx)
 
-                # 8. 最优 Checkpoint
-                if test_metrics.get("accuracy", 0.0) > best_acc:
-                    best_acc = test_metrics["accuracy"]
-                    self._save_checkpoint(round_idx)
-
-            self.logger.info(f"Training Finished. Best Accuracy: {best_acc:.4f}")
+            # self.logger.info(f"Training Finished. Best Accuracy: {best_acc:.4f}")
+            self.logger.info("Training Finished.")
 
         finally:
             self._shutdown_parallel_training()
@@ -377,31 +372,6 @@ class BaseRunner:
         summary = " | ".join(f"{k}: {v:.4f}" for k, v in results.items())
         self.logger.info(f"[Global Eval] {summary}")
         return results
-
-    def _run_local_eval(self, round_idx: int) -> None:
-        """
-        随机抽取一部分客户端, 调用 client.evaluate() 汇总本地指标.
-        evaluate() 内部使用 Evaluator, Runner 只负责采样和日志聚合.
-        """
-        local_ratio = self.training_config.local_eval_ratio
-        eval_ids = random.sample(self.client_ids, max(1, int(len(self.client_ids) * local_ratio)))
-        client_config = ClientConfig.from_dict(self.config.get("client", {}))
-        results_collector: Dict[str, List[float]] = {}
-
-        for cid in eval_ids:
-            server_payload = self.server.broadcast([cid])[cid]
-            client = self._create_client(cid, client_config)
-            client.receive(server_payload)          # 同步全局权重
-            res = client.evaluate()                 # 调用内置 Evaluator
-            for k, v in res.items():
-                results_collector.setdefault(k, []).append(v)
-            del client
-
-        log_dict: Dict[str, float] = {}
-        for k, vals in results_collector.items():
-            log_dict[f"local/avg_{k}"] = float(np.mean(vals))
-            log_dict[f"local/std_{k}"] = float(np.std(vals))
-        self.logger.log_metrics(log_dict, step=round_idx)
 
     def _aggregate_train_metrics(self, updates: List[Dict[str, Any]]) -> Dict[str, float]:
         """

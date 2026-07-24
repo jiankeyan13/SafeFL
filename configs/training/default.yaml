@@ -3,8 +3,6 @@ training:
   num_clients: 100
   rounds: 150
   clients_fraction: 0.2
-  eval_interval: 5
-  local_eval_ratio: 0.2
   lr_schedule:
     enabled: true
     name: warmup_cosine
@@ -13,7 +11,7 @@ training:
     warmup_start_lr: 0.0
 
 client:
-  lr: 0.01
+  lr: 0.1
   momentum: 0.9
   weight_decay: 0.0005
   optimizer_name: SGD
@@ -21,5 +19,3 @@ client:
   epochs: 3
   batch_size: 32
   num_workers: 0
-  grad_clip_norm: 5.0
-  bn_calib_batches: 5

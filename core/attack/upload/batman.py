@@ -409,7 +409,7 @@ class BatmanAttack:
     def __init__(
         self,
         target_label: int = 0,
-        poison_ratio: float = 0.1,
+        poison_ratio: float = 0.5,
         patch_size: int = 3,
         patch_value: float = 1.0,
         patch_location: str = "bottom_right",

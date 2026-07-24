@@ -8,7 +8,7 @@ from core.utils.evaluator import Evaluator
 from core.config import ClientConfig, TrainerConfig
 from data.dataset_store import DatasetStore
 from data.task import TaskSet
-from data.constants import SPLIT_TRAIN, SPLIT_TEST, client_owner
+from data.constants import SPLIT_TRAIN, client_owner
 
 
 class BaseClient:
@@ -54,7 +54,6 @@ class BaseClient:
         self.loss = config.trainer_config.build_criterion()
 
         self.train_loader = self._create_train_dataloader()
-        self.test_loader = self._create_test_dataloader()
 
     def _build_dataset(self, split: str) -> Optional[DatasetStore]:
         """
@@ -90,22 +89,6 @@ class BaseClient:
             raise RuntimeError(f"Client {self.owner_id} has no training data.")
         return DataLoader(
             ds, batch_size=self.config.batch_size, shuffle=True, drop_last=False,
-            num_workers=self.config.num_workers, pin_memory=True,
-            persistent_workers=self.config.num_workers > 0
-        )
-
-    def _create_test_dataloader(self) -> Optional[DataLoader]:
-        """
-        构建验证用 DataLoader。
-
-        Returns:
-            若该客户端不具备测试划分，则返回 None。
-        """
-        ds = self._build_dataset(SPLIT_TEST)
-        if ds is None:
-            return None
-        return DataLoader(
-            ds, batch_size=self.config.batch_size, shuffle=False, drop_last=False,
             num_workers=self.config.num_workers, pin_memory=True,
             persistent_workers=self.config.num_workers > 0
         )
@@ -162,20 +145,6 @@ class BaseClient:
         avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
         return {"train_loss": avg_loss, "delta": delta}
 
-    def evaluate(self) -> Dict[str, float]:
-        """
-        在本地测试集执行测试模型评估。
-        依赖内置 Evaluator。若输入被恶意污染(如触发后门),该方法的准确率返回值即对应 ASR 攻击成功率。
-
-        Returns:
-            各项评估指标得分(例如 {"accuracy": 0.98, "loss": 0.05})。
-        """
-        if self.test_loader is None:
-            return {}
-        return self.evaluator.evaluate(
-            self.model, self.test_loader, self.loss, self.device
-        )
-
     def package(self, train_metrics: Dict[str, Any]) -> Dict[str, Any]:
         """
         打包客户端想要向上传递的数据集合，用于被服务端的聚合器收集。
@@ -194,7 +163,7 @@ class BaseClient:
     def step(self, server_payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         客户端单轮工作主令控制流(Template Method)。
-        依次发生：接收 -> 训练 -> 评估 -> 组装并发送。
+        依次发生：接收 -> 训练 -> 组装并发送。
 
         Args:
             server_payload: Server 对 Client 在这一 Round 投喂的完整通信包裹(state_dict)。

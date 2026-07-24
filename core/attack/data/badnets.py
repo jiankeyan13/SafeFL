@@ -16,13 +16,13 @@ class BadNetsAttack:
     纯数据端攻击,仅实现 poison_dataset,不干预训练和上传。
     """
 
-    def __init__(self, target_label: int, poison_ratio: float = 0.1, patch_size: int = 3,
+    def __init__(self, target_label: int, poison_ratio: float = 0.5, patch_size: int = 3,
                  patch_value: float = 1.0, patch_location: str = "bottom_right",
                  seed: Optional[int] = None):
         """
         Args:
             target_label: 后门目标类别。
-            poison_ratio: 训练集投毒比例 (0.0~1.0)。
+            poison_ratio: 训练集投毒比例. >=1 时投毒全部训练样本.
             patch_size: 触发器方块边长 (像素)。
             patch_value: 触发器像素值 (0.0 黑, 1.0 白)。
             patch_location: 触发器位置, 可选 'bottom_right', 'bottom_left', 'top_right', 'top_left'。

@@ -43,10 +43,8 @@ def client_config_to_dict(config: ClientConfig) -> Dict[str, Any]:
         "epochs": tc.epochs,
         "batch_size": config.batch_size,
         "num_workers": config.num_workers,
-        "bn_calib_batches": config.bn_calib_batches,
         "optimizer_name": tc.optimizer_name,
         "criterion_name": tc.criterion_name,
-        "grad_clip_norm": tc.grad_clip_norm,
     }
 
 

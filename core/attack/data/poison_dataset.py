@@ -13,7 +13,7 @@ class PoisonedDatasetWrapper(Dataset):
         original_dataset: Dataset,
         trigger_transform: Callable,
         target_label: int,
-        poison_ratio: float = 0.1,
+        poison_ratio: float = 0.5,
         mode: str = "train",
         seed: Optional[int] = None,
         return_original_label: bool = False,

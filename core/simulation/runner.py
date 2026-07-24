@@ -217,10 +217,9 @@ class Runner(BaseRunner):
         """联邦学习主控循环, 每轮更新 current_round 供 MaliciousClient 使用."""
         training_conf = self.config["training"]
         total_rounds = training_conf["rounds"]
-        eval_interval = self.training_config.eval_interval
 
         self.logger.info(">>> Start Training")
-        best_acc = 0.0
+        # best_acc = 0.0
 
         try:
             for round_idx in range(total_rounds):
@@ -238,14 +237,12 @@ class Runner(BaseRunner):
 
                 test_metrics = self._run_global_eval(round_idx)
 
-                if round_idx % eval_interval == 0:
-                    self._run_local_eval(round_idx)
+                # if test_metrics.get("accuracy", 0.0) > best_acc:
+                #     best_acc = test_metrics["accuracy"]
+                #     self._save_checkpoint(round_idx)
 
-                if test_metrics.get("accuracy", 0.0) > best_acc:
-                    best_acc = test_metrics["accuracy"]
-                    self._save_checkpoint(round_idx)
-
-            self.logger.info(f"Training Finished. Best Accuracy: {best_acc:.4f}")
+            # self.logger.info(f"Training Finished. Best Accuracy: {best_acc:.4f}")
+            self.logger.info("Training Finished.")
         finally:
             self._shutdown_parallel_training()
             self.logger.close()

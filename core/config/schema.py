@@ -9,14 +9,13 @@ class TrainerConfig:
     """配置模型训练的参数"""
 
     optimizer_name: str = "SGD"
-    lr: float = 0.01
+    lr: float = 0.1
     momentum: float = 0.9
     weight_decay: float = 5e-4
     criterion_name: str = "CrossEntropyLoss"
     epochs: int = 2
     batch_size: int = 32
     num_workers: int = 0
-    grad_clip_norm: Optional[float] = 5.0
     extra_params: Dict[str, Any] = field(default_factory=dict)
 
     def build_optimizer(self, model: torch.nn.Module) -> torch.optim.Optimizer:
@@ -40,7 +39,6 @@ class TrainerConfig:
 class ClientConfig:
     """配置客户端运行的基础参数"""
 
-    bn_calib_batches: int = 5
     num_workers: int = 0
     batch_size: int = 32
     trainer_config: TrainerConfig = field(default_factory=TrainerConfig)
@@ -55,7 +53,6 @@ class ClientConfig:
             "optimizer_name",
             "criterion_name",
             "epochs",
-            "grad_clip_norm",
         ]:
             if key in config_dict:
                 trainer_kwargs[key] = config_dict[key]
@@ -66,7 +63,7 @@ class ClientConfig:
 
         trainer_cfg = TrainerConfig(**trainer_kwargs)
         client_kwargs = {"trainer_config": trainer_cfg}
-        for key in ["bn_calib_batches", "num_workers", "batch_size"]:
+        for key in ["num_workers", "batch_size"]:
             if key in config_dict:
                 client_kwargs[key] = config_dict[key]
 
@@ -112,15 +109,13 @@ class TrainingConfig:
     num_clients: int = 100
     rounds: int = 100
     clients_fraction: float = 0.2
-    eval_interval: int = 5
-    local_eval_ratio: float = 0.2
     seed: int = 42
     lr_schedule: LRScheduleConfig = field(default_factory=LRScheduleConfig)
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "TrainingConfig":
         kwargs = {}
-        for key in ["num_clients", "rounds", "clients_fraction", "eval_interval", "local_eval_ratio", "seed"]:
+        for key in ["num_clients", "rounds", "clients_fraction", "seed"]:
             if key in config_dict:
                 kwargs[key] = config_dict[key]
         if "lr_schedule" in config_dict:
@@ -132,8 +127,6 @@ class TrainingConfig:
             "num_clients": self.num_clients,
             "rounds": self.rounds,
             "clients_fraction": self.clients_fraction,
-            "eval_interval": self.eval_interval,
-            "local_eval_ratio": self.local_eval_ratio,
             "seed": self.seed,
             "lr_schedule": self.lr_schedule.to_dict(),
         }
@@ -296,14 +289,13 @@ class DataConfig:
 
     dataset: str = "cifar10"
     root: str = "./data_source"
-    val_ratio: float = 0.1
     enable_proxy: bool = False
     partitioner: PartitionerConfig = field(default_factory=PartitionerConfig)
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "DataConfig":
         kwargs = {}
-        for key in ["dataset", "root", "val_ratio", "enable_proxy"]:
+        for key in ["dataset", "root", "enable_proxy"]:
             if key in config_dict:
                 kwargs[key] = config_dict[key]
 
@@ -319,7 +311,7 @@ class ParallelConfig:
 
     backend: str = "ray"
     gpu_ids: List[int] = field(default_factory=list)
-    actors_per_gpu: int = 1
+    actors_per_gpu: int = 20
 
     def __post_init__(self) -> None:
         self.backend = str(self.backend).lower().strip()
@@ -336,7 +328,7 @@ class ParallelConfig:
         return cls(
             backend=config_dict.get("backend", "ray"),
             gpu_ids=list(gpu_ids),
-            actors_per_gpu=int(config_dict.get("actors_per_gpu", 1)),
+            actors_per_gpu=int(config_dict.get("actors_per_gpu", 20)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -425,7 +417,6 @@ class GlobalConfig:
                 "dataset": self.data.dataset,
                 "root": self.data.root,
                 "num_clients": self.training.num_clients,
-                "val_ratio": self.data.val_ratio,
                 "enable_proxy": self.data.enable_proxy,
                 "partitioner": {"name": self.data.partitioner.name, "params": self.data.partitioner.params},
             },
@@ -437,7 +428,6 @@ class GlobalConfig:
                 "epochs": self.client.trainer_config.epochs,
                 "batch_size": self.client.batch_size,
                 "num_workers": self.client.num_workers,
-                "bn_calib_batches": self.client.bn_calib_batches,
             },
             "model": self.model,
             "algorithm": self.algorithm,
