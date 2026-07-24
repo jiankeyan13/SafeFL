@@ -5,4 +5,5 @@ malicious_epochs: 3
 strategies:
   - name: lga
     fraction: 1.0
-    params: {}
+    params:
+      epoch_clean: 2

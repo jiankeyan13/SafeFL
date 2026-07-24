@@ -69,8 +69,12 @@ class LGAAttack:
     """
     Training-stage LGA backdoor attack.
 
+    Local training is two-phase (see LGAClient):
+    1. ``epoch_clean`` epochs on unpoisoned data (no LGA).
+    2. ``epochs`` (client trainer config) on poisoned data with LGA after each epoch.
+
     - poison_dataset: BadNets trigger poisoning
-    - per-epoch projection: handled by LGAClient.train via project_layerwise
+    - per-epoch projection: LGAClient.train via project_layerwise (poison phase only)
     """
 
     client_class = None  # late-bound to LGAClient
@@ -83,7 +87,10 @@ class LGAAttack:
         patch_value: float = 1.0,
         patch_location: str = "bottom_right",
         seed: Optional[int] = None,
+        epoch_clean: int = 2,
     ):
+        if epoch_clean < 0:
+            raise ValueError(f"epoch_clean must be >= 0, got {epoch_clean}")
         self._badnets = BadNetsAttack(
             target_label=target_label,
             poison_ratio=poison_ratio,
@@ -95,6 +102,7 @@ class LGAAttack:
         self.target_label = target_label
         self.poison_ratio = poison_ratio
         self.seed = seed
+        self.epoch_clean = int(epoch_clean)
 
     def poison_dataset(
         self,
