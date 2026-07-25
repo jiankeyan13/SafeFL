@@ -86,8 +86,8 @@ class Evaluator:
         """
         在指定数据集上评估模型。
 
-        注意：若 poisoned_loader 已将标签替换为攻击目标标签,
-        则 accuracy 即代表 targeted ASR。
+        注意: 若 poisoned_loader 已将标签替换为攻击目标标签,
+        则 accuracy 可近似表示 ASR (未排除目标类样本, 建议使用 evaluate_backdoor).
         """
         was_training = model.training
         model.eval()
@@ -122,7 +122,7 @@ class Evaluator:
         在带触发器的测试集上评估, 一次前向同时计算 targeted ASR 与 Backdoor Acc.
 
         要求 dataloader 每条样本为 (inputs, target_label, original_label).
-        - ASR: 预测等于攻击目标标签的比例.
+        - ASR: 非目标类样本加触发器后预测为目标类的比例 (分母排除原始标签等于目标类的样本).
         - backdoor_acc: 预测等于原始真实标签的比例.
         """
         was_training = model.training
@@ -130,6 +130,7 @@ class Evaluator:
         model.to(device)
 
         asr_correct = 0
+        asr_total = 0
         backdoor_correct = 0
         total = 0
         total_loss = 0.0
@@ -147,7 +148,9 @@ class Evaluator:
                 loss_count += original_labels.size(0)
 
             preds = outputs.argmax(dim=1)
-            asr_correct += preds.eq(target_labels).sum().item()
+            non_target_mask = original_labels.ne(target_labels)
+            asr_total += non_target_mask.sum().item()
+            asr_correct += (preds.eq(target_labels) & non_target_mask).sum().item()
             backdoor_correct += preds.eq(original_labels).sum().item()
             total += target_labels.size(0)
 
@@ -157,7 +160,10 @@ class Evaluator:
         if total == 0:
             out = {"asr": 0.0, "backdoor_acc": 0.0}
         else:
-            out = {"asr": asr_correct / total, "backdoor_acc": backdoor_correct / total}
+            out = {
+                "asr": asr_correct / asr_total if asr_total > 0 else 0.0,
+                "backdoor_acc": backdoor_correct / total,
+            }
         if criterion is not None and loss_count > 0:
             out["backdoor_loss"] = total_loss / loss_count
         return out

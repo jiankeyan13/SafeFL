@@ -16,7 +16,7 @@ seed: 42
 parallel:
   backend: ray
   gpu_ids: []
-  actors_per_gpu: 20
+  actors_per_gpu: 10
 
 hydra:
   job:

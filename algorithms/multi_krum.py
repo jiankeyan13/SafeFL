@@ -12,7 +12,7 @@ def build_multi_krum_algorithm(
     model, device, config: dict, seed: int, **params
 ) -> Tuple[BaseServer, Type[BaseClient]]:
     """
-    Multi-Krum 聚合算法: 先用 Krum 筛选, 再用 FedAvg 聚合.
+    Multi-Krum 聚合算法: 先用迭代式 Krum 筛选, 再用 FedAvg 聚合.
 
     Returns:
         (server_instance, client_class)
