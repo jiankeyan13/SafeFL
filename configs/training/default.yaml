@@ -7,13 +7,13 @@ training:
     enabled: true
     name: warmup_cosine
     warmup_ratio: 0.1
-    min_lr: 5.0e-5
+    min_lr: 1.0e-3
     warmup_start_lr: 0.0
 
 client:
   lr: 0.1
   momentum: 0.9
-  weight_decay: 0.0005
+  weight_decay: 0.0001
   optimizer_name: SGD
   criterion_name: CrossEntropyLoss
   epochs: 3

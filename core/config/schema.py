@@ -136,7 +136,7 @@ class TrainingConfig:
 class PartitionerConfig:
     """配置数据划分器的参数"""
 
-    name: str = "dirichlet"
+    name: str = "q_non_iid"
     params: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -147,11 +147,15 @@ class PartitionerConfig:
     def max_retries(self) -> int:
         return self.params.get("max_retries", 100)
 
+    @property
+    def q(self) -> float:
+        return self.params.get("q", 0.5)
+
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "PartitionerConfig":
         if not config_dict:
             return cls()
-        return cls(name=config_dict.get("name", "dirichlet"), params=config_dict.get("params", {}))
+        return cls(name=config_dict.get("name", "q_non_iid"), params=config_dict.get("params", {}))
 
 
 @dataclass

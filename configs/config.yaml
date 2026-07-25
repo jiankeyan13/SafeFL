@@ -1,5 +1,5 @@
 defaults:
-  - partitioner: dirichlet
+  - partitioner: q_non_iid
   - model: resnet18
   - dataset: cifar10
   - algorithm: fedavg

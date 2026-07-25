@@ -107,6 +107,103 @@ class DirichletPartitioner(Partitioner):
         return taskset
 
 
+class QNonIIDPartitioner(Partitioner):
+    """
+    基于 q 的非 IID 划分 (Cao et al., 2021; Fang et al., 2020).
+
+    将客户端按类别数 X 分成 X 组; 标签为 x 的样本按固定配额分配:
+    第 x 组获得 int(n * q) 个, 其余各组各获得 int(n * (1-q)/(X-1)) 个;
+    因取整产生的余数随机补入各组. 组内样本均匀分配给该组客户端.
+    q 越大, 非 IID 程度越高.
+    """
+
+    def __init__(self, q: float = 0.5, seed: int = 42):
+        self.q = q
+        self.seed = seed
+
+    def _assign_class_to_groups(
+        self,
+        sample_indices: np.ndarray,
+        label_group: int,
+        num_classes: int,
+        rng: np.random.Generator,
+    ) -> List[List[int]]:
+        """将同一类别的样本按固定配额分配到各组."""
+        num_idx_k = len(sample_indices)
+        shuffled = sample_indices.copy()
+        rng.shuffle(shuffled)
+
+        main_count = int(num_idx_k * self.q)
+        other_count = int(num_idx_k * (1 - self.q) / (num_classes - 1))
+        group_counts = np.full(num_classes, other_count, dtype=int)
+        group_counts[label_group] = main_count
+
+        remainder = num_idx_k - group_counts.sum()
+        if remainder > 0:
+            extra_groups = rng.permutation(num_classes)
+            for i in range(remainder):
+                group_counts[extra_groups[i % num_classes]] += 1
+
+        splits: List[List[int]] = []
+        cursor = 0
+        for count in group_counts:
+            end = cursor + count
+            splits.append(shuffled[cursor:end].tolist())
+            cursor = end
+        return splits
+
+    def partition(self, store: DatasetStore, num_clients: int, split: str = "train") -> TaskSet:
+        labels = store.get_label()
+        unique_labels = np.sort(np.unique(labels))
+        num_classes = len(unique_labels)
+
+        if num_clients <= 0:
+            raise ValueError("num_clients must be positive")
+        if not 0 < self.q <= 1:
+            raise ValueError("q must be in (0, 1]")
+        if num_classes < 2:
+            raise ValueError("q_non_iid requires at least 2 classes")
+        if num_clients % num_classes != 0:
+            raise ValueError(
+                f"num_clients ({num_clients}) must be divisible by num_classes ({num_classes})"
+            )
+
+        clients_per_group = num_clients // num_classes
+        label_to_group = {label: i for i, label in enumerate(unique_labels)}
+
+        rng = np.random.default_rng(self.seed)
+        group_indices: List[List[int]] = [[] for _ in range(num_classes)]
+
+        for label_val in unique_labels:
+            sample_indices = np.where(labels == label_val)[0]
+            label_group = label_to_group[label_val]
+            class_splits = self._assign_class_to_groups(
+                sample_indices, label_group, num_classes, rng
+            )
+            for group_id, split_indices in enumerate(class_splits):
+                group_indices[group_id].extend(split_indices)
+
+        client_indices: List[List[int]] = [[] for _ in range(num_clients)]
+        for group_id, indices in enumerate(group_indices):
+            rng.shuffle(indices)
+            start_client = group_id * clients_per_group
+            splits = np.array_split(indices, clients_per_group)
+            for offset, split_indices in enumerate(splits):
+                client_indices[start_client + offset].extend(split_indices.tolist())
+
+        taskset = TaskSet()
+        for i, client_indice in enumerate(client_indices):
+            rng.shuffle(client_indice)
+            task = Task(
+                owner_id=client_owner(i),
+                dataset_tag=store.name,
+                split=split,
+                indices=client_indice,
+            )
+            taskset.add_task(task)
+        return taskset
+
+
 def build_partitioner(config: "PartitionerConfig", seed: int) -> Partitioner:
     """
     根据配置构建划分器的工厂函数。
@@ -129,6 +226,8 @@ def build_partitioner(config: "PartitionerConfig", seed: int) -> Partitioner:
         )
     elif config.name == "iid":
         return IIDPartitioner(seed=seed)
+    elif config.name == "q_non_iid":
+        return QNonIIDPartitioner(q=config.q, seed=seed)
     else:
         raise ValueError(f"Unknown partitioner: {config.name}. "
-                         f"Supported: 'iid', 'dirichlet'")
+                         f"Supported: 'iid', 'dirichlet', 'q_non_iid'")
