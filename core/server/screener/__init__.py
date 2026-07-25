@@ -1,4 +1,5 @@
 from .base_screener import BaseScreener
+from .dnc import DnCScreener
 from .krum import KrumScreener
 from .hdbscan import HdbscanScreener
 from .deepsight_screener import DeepSightScreener
