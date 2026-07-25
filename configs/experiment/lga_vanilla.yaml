@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - override /algorithm: multi_krum
+  - override /algorithm: fedavg
   - override /attack: lga
   - override /model: resnet18
   - override /dataset: cifar10

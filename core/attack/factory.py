@@ -59,7 +59,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
-        "epoch_clean": 2,
+        "epoch_clean": 0,
     },
     "neurotoxin": {
         "target_label": 0,

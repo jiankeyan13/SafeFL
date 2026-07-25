@@ -1,15 +1,15 @@
 """
 FoolsGold 筛选器: 通过历史梯度相似性动态分配聚合权重, 抵御 Sybil 攻击.
+# 论文官方仓库默认关闭重要性加权
 
 算法流程:
-1. 将 delta_i 累加到各自历史梯度 H_i
-2. 提取输出层参数作为指示性特征
-3. 计算客户端对之间的加权余弦相似度矩阵
-4. 执行 Pardoning 赦免操作, 避免误伤诚实客户端
-5. 计算 alpha_i = 1 - max_j(cs_ij), 归一化后经 logit 非线性拉伸
+1. 将完整模型 delta_i 累加到各自历史梯度 H_i
+2. 计算客户端对之间的余弦相似度矩阵
+3. 执行 Pardoning 赦免操作, 避免误伤诚实客户端
+4. 计算 alpha_i = 1 - max_j(cs_ij), 归一化后经 logit 非线性拉伸
 """
 
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Sequence
 
 import torch
 from core.utils.registry import SCREENER_REGISTRY
@@ -19,36 +19,36 @@ from .base_screener import BaseScreener
 @SCREENER_REGISTRY.register("foolsgold")
 class FoolsGoldScreener(BaseScreener):
     """
-    FoolsGold 筛选器: 基于历史梯度相似性为每个客户端分配学习率权重.
+    FoolsGold 筛选器: 基于完整模型历史 delta 相似性为每个客户端分配学习率权重.
 
     核心逻辑嵌入在筛选阶段, 通过动态权重抑制 Sybil 恶意贡献, 而非直接丢弃.
     与 AvgAggregator 配合使用时, screen_scores 作为聚合权重.
     """
 
-    def __init__(self, use_history: bool = True, topk_prop: float = 0.1, **kwargs):
-        """use_history: 是否使用历史梯度累加; topk_prop: 每类保留特征比例 (默认 0.1)."""
+    def __init__(self, use_history: bool = True, **kwargs):
+        """use_history: 是否使用历史梯度累加."""
         super().__init__(**kwargs)
-        self.use_history, self.topk_prop = use_history, topk_prop
+        self.use_history = use_history
         self._history_features: Dict[str, torch.Tensor] = {}
-        self._output_layer_cache: Optional[Tuple[frozenset, Optional[str], Optional[str]]] = None
 
-    def _importance_weights(self, global_model: torch.nn.Module, weight_name: str, bias_name: Optional[str], device: torch.device) -> torch.Tensor:
-        """软加权 (论文 importanceFeatureMapLocal): 去均值 + 按类归一化 + top-k. bias 对应位置填 1."""
-        state = global_model.state_dict()
-        weight = state[weight_name].float().to(device)
-        n_classes, class_d = weight.shape[0], weight.numel() // weight.shape[0]
-        k = max(1, int(class_d * self.topk_prop))
-        M = weight.reshape(n_classes, class_d)
-        M_centered = (M - M.mean(dim=1, keepdim=True)).abs()
-        M_norm = M_centered / M_centered.sum(dim=1, keepdim=True).clamp(min=1e-8)
-        _, topk_idx = M_norm.topk(k, dim=1, largest=True)
-        mask = torch.zeros_like(M_norm, device=device)
-        mask.scatter_(1, topk_idx, 1.0)
-        weight_imp = (M_norm * mask).flatten()
-        if bias_name and bias_name in state:
-            bias_ones = torch.ones(state[bias_name].numel(), device=device, dtype=weight_imp.dtype)
-            return torch.cat([weight_imp, bias_ones])
-        return weight_imp
+    def _get_learnable_keys(
+        self, global_model: torch.nn.Module, first_delta: Dict[str, torch.Tensor]
+    ) -> Sequence[str]:
+        if global_model is not None:
+            return [name for name, param in global_model.named_parameters() if param.requires_grad]
+        return list(first_delta.keys())
+
+    def _flatten_delta(
+        self, delta: Dict[str, torch.Tensor], keys: Sequence[str], device: torch.device
+    ) -> torch.Tensor:
+        flat_parts = [
+            delta[name].detach().float().reshape(-1).to(device)
+            for name in keys
+            if name in delta
+        ]
+        if not flat_parts:
+            return torch.zeros(0, device=device, dtype=torch.float32)
+        return torch.cat(flat_parts, dim=0)
 
     def _pardoning(self, cs: torch.Tensor) -> torch.Tensor:
         """Pardoning: 若 v_j > v_i, 仅将 cs_ij 按 v_i/v_j 缩小 (有方向性)."""
@@ -61,40 +61,21 @@ class FoolsGoldScreener(BaseScreener):
     def screen(self, client_deltas: List[Dict[str, torch.Tensor]], num_samples: List[float], global_model: torch.nn.Module = None, context: Dict[str, Any] = None) -> Tuple[List[float], Dict[str, Any]]:
         """执行 FoolsGold 筛选, 返回每客户端的连续权重 alpha_i (0~1)."""
         context = context or {}
-        n = len(client_deltas)
         client_ids = context["client_ids"]
-
-        # 输出层定位 (带缓存)
-        state_keys = frozenset(global_model.state_dict().keys())
-        if self._output_layer_cache is not None and self._output_layer_cache[0] == state_keys:
-            weight_name, bias_name = self._output_layer_cache[1], self._output_layer_cache[2]
-        else:
-            keys = list(global_model.state_dict().keys())
-            key_set = set(keys)
-            candidates = [(k, k[:-6] + "bias") for k in keys if k.endswith(".weight") and k[:-6] + "bias" in key_set]
-            weight_name, bias_name = candidates[-1] if candidates else (None, None)
-            self._output_layer_cache = (state_keys, weight_name, bias_name)
-
         device = next(global_model.parameters()).device
+        learnable_keys = self._get_learnable_keys(global_model, client_deltas[0])
 
-        # 1. 更新历史梯度 H_i += delta_i, 提取输出层特征
+        # 1. 更新历史梯度 H_i += delta_i, 提取完整模型特征
         feature_vectors = []
         for cid, delta in zip(client_ids, client_deltas):
-            parts = [delta[weight_name].flatten()]
-            if bias_name and bias_name in delta:
-                parts.append(delta[bias_name].flatten())
-            feat = torch.cat(parts).float().to(device)
+            feat = self._flatten_delta(delta, learnable_keys, device)
             if self.use_history:
                 self._history_features[cid] = self._history_features.get(cid, torch.zeros_like(feat)).to(device) + feat
                 feature_vectors.append(self._history_features[cid])
             else:
                 feature_vectors.append(feat)
 
-        # 1.5 特征重要性软加权 (论文 importanceFeatureMapLocal)
-        imp = self._importance_weights(global_model, weight_name, bias_name, device)
-        feature_vectors = [fv * imp for fv in feature_vectors]
-
-        # 2. 计算加权余弦相似度矩阵
+        # 2. 计算余弦相似度矩阵
         stack = torch.stack(feature_vectors)
         norms = stack / torch.clamp(stack.norm(p=2, dim=1, keepdim=True), min=1e-8)
         cs = torch.clamp(torch.mm(norms, norms.t()), -1.0, 1.0)

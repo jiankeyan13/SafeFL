@@ -6,4 +6,4 @@ strategies:
   - name: lga
     fraction: 1.0
     params:
-      epoch_clean: 2
+      epoch_clean: 0

@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from core.attack.training.neurotoxin import compute_clean_batch_gradients
 from core.client.base_client import BaseClient
 from core.client.malicious_client import MaliciousClient
 from core.config import ClientConfig
@@ -62,6 +61,9 @@ class NeurotoxinClient(MaliciousClient):
         )
 
     def _compute_clean_batch_gradients(self) -> Dict[str, torch.Tensor]:
+        # Lazy import to avoid neurotoxin <-> neurotoxin_client cycle.
+        from core.attack.training.neurotoxin import compute_clean_batch_gradients
+
         if self.clean_loader is None:
             return {}
         data, target = next(iter(self.clean_loader))

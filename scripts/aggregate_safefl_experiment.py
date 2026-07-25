@@ -13,8 +13,8 @@ import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-DEFAULT_ATTACKS = ["vanilla", "chameleon", "neurotoxin", "pgd"]
-DEFAULT_DEFENSES = ["vanilla"]
+DEFAULT_ATTACKS = ["vanilla", "dba", "neurotoxin", "pgd"]
+DEFAULT_DEFENSES = ["vanilla", "multikrum"]
 
 
 def _parse_run_name(name: str) -> Optional[Tuple[str, str]]:

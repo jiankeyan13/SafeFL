@@ -65,12 +65,11 @@ class TrimmedMeanAggregator(BaseAggregator):
 
         # 逐层处理 (Layer-wise Processing)
         for name, _ in template_update.items():
-            # Shape: [num_clients, param_shape...]
-            client_tensors = []
-            for upd in updates:
-                t = upd[name].to(self.device)
-                client_tensors.append(t)
-            
+            # Cast to float32 for sort/mean; integer buffers (e.g. BN
+            # num_batches_tracked) are rounded back in BaseServer.step.
+            client_tensors = [
+                upd[name].to(device=self.device, dtype=torch.float32) for upd in updates
+            ]
             stacked_tensors = torch.stack(client_tensors, dim=0)
 
             # sorted_tensors Shape: [num_clients, param_shape...]
@@ -79,7 +78,6 @@ class TrimmedMeanAggregator(BaseAggregator):
             # Trimming
             keep_start = num_cut
             keep_end = num_clients - num_cut
-            
             trimmed_tensors = sorted_tensors[keep_start:keep_end]
 
             aggregated_params[name] = torch.mean(trimmed_tensors, dim=0)

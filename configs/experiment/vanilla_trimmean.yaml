@@ -1,10 +1,11 @@
 # @package _global_
 defaults:
-  - override /algorithm: multi_krum
-  - override /attack: lga
+  - override /algorithm: trim_mean
+  - override /attack: badnets
   - override /model: resnet18
   - override /dataset: cifar10
 
+# Badnets 记为 vanilla. Trimmed Mean 记为 trimmean.
 # NOTE: config.yaml 末尾的 experiment_name=${algorithm.name} 会覆盖此处,
 # 启动时需 CLI 显式传入 experiment_name / logging.name / logging.project.
 
@@ -25,10 +26,9 @@ attack:
   malicious_fraction: 0.1
   per_round_fraction: 0.1
   strategies:
-    - name: lga
+    - name: badnets
       fraction: 1.0
-      params:
-        epoch_clean: 0
+      params: {}
 
 logging:
   use_wandb: true

@@ -1,7 +1,7 @@
 # @package _global_
 defaults:
-  - override /algorithm: multi_krum
-  - override /attack: lga
+  - override /algorithm: trim_mean
+  - override /attack: pgd
   - override /model: resnet18
   - override /dataset: cifar10
 
@@ -25,10 +25,9 @@ attack:
   malicious_fraction: 0.1
   per_round_fraction: 0.1
   strategies:
-    - name: lga
+    - name: pgd
       fraction: 1.0
-      params:
-        epoch_clean: 0
+      params: {}
 
 logging:
   use_wandb: true
