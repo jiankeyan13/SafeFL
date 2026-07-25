@@ -13,7 +13,7 @@ client:
 training:
   clients_fraction: 0.1
   lr_schedule:
-    enabled: true
+    enabled: false
     name: warmup_cosine
     warmup_ratio: 0.1
     min_lr: 5.0e-5

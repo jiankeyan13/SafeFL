@@ -12,43 +12,7 @@ from core.attack.upload.lp import save_layer_score_record
 from core.client.malicious_client import MaliciousClient
 from core.simulation.base_runner import BaseRunner
 from core.config import AttackStrategyConfig, ClientConfig, apply_malicious_epochs_override
-from data.constants import OWNER_SERVER, SPLIT_TEST_GLOBAL
-
-
-def _parse_client_num(client_id: str) -> int:
-    return int(str(client_id).split("_")[-1])
-
-
-def sample_malicious_clients_stratified(
-    client_ids: List[str],
-    num_malicious: int,
-    num_blocks: int,
-    rng: random.Random,
-) -> List[str]:
-    """Round-robin sample malicious clients across client_id % num_blocks buckets."""
-    buckets: Dict[int, List[str]] = {block_id: [] for block_id in range(num_blocks)}
-    for cid in client_ids:
-        buckets[_parse_client_num(cid) % num_blocks].append(cid)
-
-    for block_id in buckets:
-        rng.shuffle(buckets[block_id])
-
-    block_order = list(range(num_blocks))
-    rng.shuffle(block_order)
-    selected: List[str] = []
-
-    while len(selected) < num_malicious:
-        added = False
-        for block_id in block_order:
-            if len(selected) >= num_malicious:
-                break
-            if buckets[block_id]:
-                selected.append(buckets[block_id].pop(0))
-                added = True
-        if not added:
-            break
-
-    return selected
+from data.constants import OWNER_SERVER, SPLIT_TEST_GLOBAL, client_owner
 
 
 class Runner(BaseRunner):
@@ -106,31 +70,8 @@ class Runner(BaseRunner):
         if num_malicious == 0:
             return
 
-        # 使用固定种子进行采样，确保每次运行选中的恶意客户端一致
-        rng = random.Random(self.seed)
-        uses_dba = any(strategy.name == "dba" for strategy in self.attack_config.strategies)
-        if uses_dba:
-            num_blocks = 4
-            for strategy in self.attack_config.strategies:
-                if strategy.name == "dba":
-                    num_blocks = int(strategy.params.get("num_blocks", 4))
-                    break
-            malicious_list = sample_malicious_clients_stratified(
-                self.client_ids, num_malicious, num_blocks, rng
-            )
-            if num_malicious < num_blocks:
-                self.logger.warning(
-                    f"DBA: num_malicious={num_malicious} < num_blocks={num_blocks}, "
-                    "cannot guarantee all trigger blocks have malicious clients."
-                )
-            covered_blocks = {_parse_client_num(cid) % num_blocks for cid in malicious_list}
-            if len(covered_blocks) < num_blocks:
-                self.logger.warning(
-                    f"DBA: malicious clients cover {len(covered_blocks)}/{num_blocks} blocks: "
-                    f"{sorted(covered_blocks)}"
-                )
-        else:
-            malicious_list = rng.sample(self.client_ids, num_malicious)
+        # 与官方一致: 固定第 0 组 client_0..client_{num_malicious-1} 为恶意客户端
+        malicious_list = [client_owner(i) for i in range(num_malicious)]
         self.malicious_client_ids = set(malicious_list)
 
         start_idx = 0

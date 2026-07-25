@@ -11,14 +11,14 @@ from core.utils.registry import ATTACK_REGISTRY
 # 各攻击类型的默认 params, 用户未配置时使用
 _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
     "badnets": {
-        "target_label": 0,
+        "target_label": 5,
         "poison_ratio": 0.5,
         "patch_size": 5,
         "patch_value": 1.0,
         "patch_location": "bottom_right",
     },
     "dba": {
-        "target_label": 0,
+        "target_label": 5,
         "poison_ratio": 0.5,
         "patch_size": 5,
         "patch_value": 1.0,
@@ -26,7 +26,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "num_blocks": 4,
     },
     "badnets_dual": {
-        "target_label": 0,
+        "target_label": 5,
         "poison_ratio": 0.5,
         "patch_size": 5,
         "patch_value": 1.0,
@@ -36,7 +36,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "delta_log_enabled": True,
     },
     "batman": {
-        "target_label": 0,
+        "target_label": 5,
         "poison_ratio": 0.5,
         "patch_size": 5,
         "patch_value": 1.0,
@@ -54,7 +54,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "layer_selection_log_path": None,
     },
     "lga": {
-        "target_label": 0,
+        "target_label": 5,
         "poison_ratio": 0.5,
         "patch_size": 5,
         "patch_value": 1.0,
@@ -62,7 +62,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "epoch_clean": 0,
     },
     "neurotoxin": {
-        "target_label": 0,
+        "target_label": 5,
         "poison_ratio": 0.5,
         "patch_size": 5,
         "patch_value": 1.0,
@@ -70,7 +70,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "mask_ratio": 0.10,
     },
     "pgd": {
-        "target_label": 0,
+        "target_label": 5,
         "poison_ratio": 0.5,
         "patch_size": 5,
         "patch_value": 1.0,
@@ -80,7 +80,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "default_epsilon_scale": 1.0,
     },
     "chameleon": {
-        "target_label": 0,
+        "target_label": 5,
         "poison_ratio": 0.5,
         "patch_size": 5,
         "patch_value": 1.0,
@@ -93,7 +93,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "projection_lr": None,
     },
     "lp": {
-        "target_label": 0,
+        "target_label": 5,
         "poison_ratio": 0.5,
         "patch_size": 5,
         "patch_value": 1.0,

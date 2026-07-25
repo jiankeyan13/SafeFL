@@ -100,7 +100,7 @@ class NeurotoxinAttack:
 
     def __init__(
         self,
-        target_label: int = 0,
+        target_label: int = 5,
         poison_ratio: float = 0.5,
         patch_size: int = 5,
         patch_value: float = 1.0,

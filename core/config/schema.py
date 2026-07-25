@@ -74,7 +74,7 @@ class ClientConfig:
 class LRScheduleConfig:
     """学习率调度配置 (warmup + cosine)"""
 
-    enabled: bool = True
+    enabled: bool = False
     name: str = "warmup_cosine"
     warmup_ratio: float = 0.1
     min_lr: float = 0.0
@@ -85,7 +85,7 @@ class LRScheduleConfig:
         if not config_dict:
             return cls()
         return cls(
-            enabled=config_dict.get("enabled", True),
+            enabled=config_dict.get("enabled", False),
             name=config_dict.get("name", "warmup_cosine"),
             warmup_ratio=config_dict.get("warmup_ratio", 0.1),
             min_lr=config_dict.get("min_lr", 0.0),
