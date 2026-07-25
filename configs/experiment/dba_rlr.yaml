@@ -1,0 +1,32 @@
+# @package _global_
+defaults:
+  - override /algorithm: rlr
+  - override /attack: dba
+  - override /model: resnet18
+  - override /dataset: cifar10
+
+client:
+  lr: 0.1
+
+training:
+  clients_fraction: 0.1
+  lr_schedule:
+    enabled: true
+    name: warmup_cosine
+    warmup_ratio: 0.1
+    min_lr: 5.0e-5
+    warmup_start_lr: 0.0
+
+attack:
+  enabled: true
+  malicious_fraction: 0.1
+  per_round_fraction: 0.1
+  strategies:
+    - name: dba
+      fraction: 1.0
+      params: {}
+
+logging:
+  use_wandb: true
+  use_csv: true
+  console_metrics: true
