@@ -2,24 +2,25 @@ from typing import Tuple, Type
 
 from core.server.base_server import BaseServer
 from core.client.base_client import BaseClient
-from core.server.aggregator.trim_mean_aggregator import TrimmedMeanAggregator
+from core.server.aggregator.rfa_aggregator import RFAAggregator
 from core.server.refiner.base_refiner import BaseRefiner
 from core.utils.registry import ALGORITHM_REGISTRY
 
 
-@ALGORITHM_REGISTRY.register("trim_mean")
-def build_trim_mean_algorithm(
+@ALGORITHM_REGISTRY.register("rfa")
+def build_rfa_algorithm(
     model, device, config: dict, seed: int, **params
 ) -> Tuple[BaseServer, Type[BaseClient]]:
     """
-    Trimmed Mean 防御: 按坐标维截断两端后取平均.
+    RFA 防御: 对客户端更新做加权几何中位数聚合 (平滑 Weiszfeld).
 
-    默认两端各去除 20% (trim_ratio=0.2).
+    默认 num_iters=4, nu=1e-6.
     """
     aggregator_conf = params.get("aggregator", {})
     aggregator_params = aggregator_conf.get("params", aggregator_conf)
-    trim_ratio = aggregator_params.get("trim_ratio", 0.2)
-    aggregator = TrimmedMeanAggregator(trim_ratio=trim_ratio, device=device)
+    num_iters = aggregator_params.get("num_iters", 4)
+    nu = aggregator_params.get("nu", 1e-6)
+    aggregator = RFAAggregator(num_iters=num_iters, nu=nu, device=device)
     refiner = BaseRefiner(config=params.get("refiner", {}))
 
     server = BaseServer(

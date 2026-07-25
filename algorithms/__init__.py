@@ -10,3 +10,5 @@ from .mars import build_mars_normal_algorithm
 from .alignins import build_alignins_algorithm
 from .lockdown import build_lockdown_algorithm
 from .trim_mean import build_trim_mean_algorithm
+from .rfa import build_rfa_algorithm
+from .rlr import build_rlr_algorithm

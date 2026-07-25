@@ -19,11 +19,11 @@ class TrimmedMeanAggregator(BaseAggregator):
     返回聚合后的纯 delta（不含全局模型权重）。
     """
 
-    def __init__(self, trim_ratio: float = 0.1, device='cuda'):
+    def __init__(self, trim_ratio: float = 0.2, device='cuda'):
         """
         Args:
             trim_ratio: 截断比例 (0.0 <= trim_ratio < 0.5)。
-                        例如 0.1 表示去掉最大的 10% 和最小的 10%。
+                        例如 0.2 表示去掉最大的 20% 和最小的 20%。
             device: 计算设备。
         """
         super().__init__(device)
