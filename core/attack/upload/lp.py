@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import heapq
 import json
-import logging
 import os
 import re
 import threading
@@ -27,7 +26,6 @@ from core.attack.data.badnets import BadNetsAttack
 from core.utils.registry import ATTACK_REGISTRY
 
 _LAYER_LOG_LOCK = threading.Lock()
-_logger = logging.getLogger(__name__)
 
 # (delta_bsr, param_name); more negative => more backdoor-critical
 LayerScore = Tuple[float, str]
@@ -105,6 +103,39 @@ def save_layer_score_record(score_dir: str, record: Mapping[str, Any]) -> str:
     with _LAYER_LOG_LOCK:
         with open(path, "w", encoding="utf-8") as f:
             f.write(payload)
+            f.write("\n")
+    return path
+
+
+def append_layer_selection_jsonl(score_dir: str, record: Mapping[str, Any]) -> str:
+    """Append one compact selection summary line for cross-round browsing."""
+    os.makedirs(score_dir, exist_ok=True)
+    path = os.path.join(score_dir, "selections.jsonl")
+    summary = {
+        "round": record.get("round"),
+        "client_id": record.get("client_id"),
+        "tau": record.get("tau"),
+        "bsr_malicious": record.get("bsr_malicious"),
+        "final_bsr": record.get("final_bsr"),
+        "ref_benign_acc": record.get("ref_benign_acc"),
+        "ref_benign_epochs": record.get("ref_benign_epochs"),
+        "ref_malicious_epochs": record.get("ref_malicious_epochs"),
+        "num_selected": record.get("num_selected"),
+        "selected_layers": list(record.get("selected_layers") or []),
+        "layer_ranking": [
+            {
+                "rank": item.get("rank"),
+                "name": item.get("name"),
+                "delta_bsr": item.get("delta_bsr"),
+                "selected": item.get("selected"),
+            }
+            for item in (record.get("layer_scores") or [])
+        ],
+    }
+    line = json.dumps(summary, ensure_ascii=False)
+    with _LAYER_LOG_LOCK:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
             f.write("\n")
     return path
 
@@ -401,23 +432,15 @@ class LPAttack:
             return self.layer_score_dir
         return _default_layer_score_dir()
 
-    def _log_selected_layers(self, record: Mapping[str, Any]) -> None:
+    def _persist_layer_selection(self, record: Dict[str, Any]) -> None:
+        """Write per-round JSON + append selections.jsonl when logging enabled."""
         if not self.log_selected_layers:
             return
-        _logger.info(
-            "LP BC layers=%d tau=%.3f BSR_mal=%.4f final_bsr=%s "
-            "ref_acc=%s ref_ben_ep=%s ref_mal_ep=%s round=%s client=%s layers=%s",
-            record.get("num_selected", 0),
-            record.get("tau", self.tau),
-            record.get("bsr_malicious", 0.0),
-            record.get("final_bsr"),
-            record.get("ref_benign_acc"),
-            record.get("ref_benign_epochs"),
-            record.get("ref_malicious_epochs"),
-            record.get("round"),
-            record.get("client_id"),
-            record.get("selected_layers", []),
-        )
+        score_dir = self._resolve_score_dir()
+        json_path = save_layer_score_record(score_dir, record)
+        jsonl_path = append_layer_selection_jsonl(score_dir, record)
+        record["score_file"] = json_path
+        record["selections_jsonl"] = jsonl_path
 
     @torch.no_grad()
     def identify_bc_layers(
@@ -476,7 +499,7 @@ class LPAttack:
             ref_malicious_epochs=ref_malicious_epochs,
         )
         self.set_attack_list(cid, attack_list)
-        self._log_selected_layers(record)
+        self._persist_layer_selection(record)
         return list(attack_list), record
 
     def poison_upload(

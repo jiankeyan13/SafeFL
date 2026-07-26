@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader, Subset
 
 from core.attack import build_attack
-from core.attack.upload.lp import save_layer_score_record
+from core.attack.upload.lp import append_layer_selection_jsonl, save_layer_score_record
 from core.client.malicious_client import MaliciousClient
 from core.simulation.base_runner import BaseRunner
 from core.config import AttackStrategyConfig, ClientConfig, apply_malicious_epochs_override
@@ -102,7 +102,13 @@ class Runner(BaseRunner):
             return
         self._lp_layer_score_dir = os.path.join(self.logger.run_dir, "lp_layer_scores")
         os.makedirs(self._lp_layer_score_dir, exist_ok=True)
-        self.logger.info(f"LP layer score dir: {self._lp_layer_score_dir}")
+        # Ensure local + Ray workers write into the same run directory.
+        for cid, attack_profile in self.client_attack_map.items():
+            strategy = self.client_strategy_map.get(cid)
+            if strategy is None or strategy.name != "lp":
+                continue
+            if hasattr(attack_profile, "layer_score_dir"):
+                attack_profile.layer_score_dir = self._lp_layer_score_dir
 
     def _record_lp_layer_selections(
         self,
@@ -123,14 +129,11 @@ class Runner(BaseRunner):
 
         for record in records:
             path = save_layer_score_record(self._lp_layer_score_dir, record)
-            self.logger.info(
-                f"LP layer scores saved={path} "
-                f"round={record.get('round')} "
-                f"client={record.get('client_id')} "
-                f"num={record.get('num_selected', 0)} "
-                f"bsr={float(record.get('bsr_malicious', 0.0)):.4f} "
-                f"layers={record.get('selected_layers', [])}"
-            )
+            jsonl_path = record.get("selections_jsonl")
+            if not jsonl_path:
+                jsonl_path = append_layer_selection_jsonl(self._lp_layer_score_dir, record)
+            record["score_file"] = path
+            record["selections_jsonl"] = jsonl_path
 
         avg_num = sum(int(r.get("num_selected", 0)) for r in records) / len(records)
         avg_bsr = sum(float(r.get("bsr_malicious", 0.0)) for r in records) / len(records)
@@ -167,6 +170,8 @@ class Runner(BaseRunner):
             resolved_dir = getattr(attack_profile, "delta_log_dir", None)
             if resolved_dir:
                 params.setdefault("delta_log_dir", resolved_dir)
+            if strategy.name == "lp" and self._lp_layer_score_dir:
+                params.setdefault("layer_score_dir", self._lp_layer_score_dir)
             spec: Dict[str, Any] = {
                 "kind": "malicious",
                 "strategy": {
