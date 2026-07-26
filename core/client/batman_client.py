@@ -1,14 +1,13 @@
 """
-Batman malicious client: parallel clean/poison local training.
+Batman malicious client: sequential clean-then-poison local training.
 
-Both branches start from the same global weights Wg:
-  - clean branch trains on unpoisoned data -> Wc
-  - poison branch trains independently on triggered data -> Wp
-Upload alignment is handled by BatmanAttack.poison_upload.
+Single model trajectory from global weights Wg:
+  1) clean data: Wg -> Wc
+  2) poison data (continued on Wc): Wc -> Wp
+Upload-stage SVD + AlphaEdit alignment on Wp is handled by BatmanAttack.poison_upload.
 """
 from __future__ import annotations
 
-import copy
 from typing import Any, Dict, Optional, Union
 
 import torch
@@ -58,7 +57,7 @@ class BatmanClient(MaliciousClient):
         return super()._build_dataset(split)
 
     def _create_clean_train_dataloader(self) -> DataLoader:
-        """Unpoisoned local train data for the clean reference branch."""
+        """Unpoisoned local train data for the clean pre-training phase (Wg -> Wc)."""
         clean_store = BaseClient._build_dataset(self, SPLIT_TRAIN)
         if clean_store is None:
             raise RuntimeError(f"Client {self.owner_id} has no clean training data.")
@@ -71,13 +70,6 @@ class BatmanClient(MaliciousClient):
             pin_memory=True,
             persistent_workers=self.config.num_workers > 0,
         )
-
-    def _clone_model_from_state(self, state: Dict[str, torch.Tensor]) -> nn.Module:
-        """Build a same-architecture clone at ``state`` without sharing storage."""
-        clone = copy.deepcopy(self.model)
-        clone.load_state_dict(state)
-        clone.to(self.device)
-        return clone
 
     def _train_one_model(
         self,
@@ -158,12 +150,11 @@ class BatmanClient(MaliciousClient):
         if self.attack_profile is None or not hasattr(self.attack_profile, "cache_clean_state"):
             raise RuntimeError("BatmanClient requires attack_profile.cache_clean_state")
 
-        # 1) Clean branch: Wg -> Wc on unpoisoned data (independent clone)
-        clean_model = self._clone_model_from_state(initial_state)
-        self._train_one_model(clean_model, self.clean_loader, apply_hooks=False)
-        self.attack_profile.cache_clean_state(self.owner_id, clean_model.state_dict())
+        # 1) Clean phase: Wg -> Wc on the same model
+        self._train_one_model(self.model, self.clean_loader, apply_hooks=False)
+        self.attack_profile.cache_clean_state(self.owner_id, self.model.state_dict())
 
-        # 2) Poison branch: Wg -> Wp independently (self.model remains at Wg)
+        # 2) Poison phase: Wc -> Wp, continued on the same model
         avg_loss = self._train_one_model(self.model, self.train_loader, apply_hooks=True)
 
         current_state = self.model.state_dict()

@@ -1,7 +1,7 @@
 """
 Batman: official BadSP / AlphaEdit alignment (upload-stage).
 
-Core action runs in poison_upload after parallel clean/poison training.
+Core action runs in poison_upload after sequential clean-then-poison training.
 Alignment ops live in this file (one attack == one upload module file).
 """
 from __future__ import annotations
@@ -408,7 +408,7 @@ class BatmanAttack:
         regularization: Optional[float] = None,
         lamda_reg: Optional[float] = None,
         beta_reg: Optional[float] = None,
-        num_selected_layers: int = 9,
+        num_selected_layers: int = 5,
         selected_layer_ratio: Optional[float] = None,
         stats_top_layers: Optional[int] = None,
         stats_layer_ratio: Optional[float] = None,

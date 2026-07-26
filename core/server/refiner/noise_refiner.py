@@ -51,7 +51,7 @@ class NoiseRefiner(BaseRefiner):
         
         # 加载权重
         global_model.load_state_dict(noisy_state)
-        
+
         # BN 校准
         if calibration_loader:
             self.calibrate_bn(global_model, calibration_loader, device)

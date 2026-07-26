@@ -11,6 +11,8 @@ class RLRAggregator(BaseAggregator):
     Robust Learning Rate (RLR) 聚合器.
 
     先对客户端 delta 做加权 FedAvg, 再按逐维符号投票结果乘以 +/-1 掩码.
+    符号翻转仅作用于可学习参数; BN running stats / num_batches_tracked
+    保持加权平均, 避免破坏非负统计量导致模型塌缩.
     论文: Ozdayi et al., AAAI 2021.
     """
 
@@ -48,6 +50,9 @@ class RLRAggregator(BaseAggregator):
         aggregated_params: Dict[str, torch.Tensor] = {}
         template_update = updates[0]
 
+        # BN buffer 等非可学习键不做符号翻转 (与 FLTrust/RFA 一致)
+        learnable_keys = self._get_learnable_keys(global_model)
+
         for name in template_update.keys():
             client_tensors = [
                 upd[name].to(device=self.device, dtype=torch.float32) for upd in updates
@@ -58,12 +63,16 @@ class RLRAggregator(BaseAggregator):
             w_view = w_tensor.view(*w_view_shape)
             avg_delta = torch.sum(stacked * w_view, dim=0)
 
-            sum_signs = torch.sign(stacked).sum(dim=0)
-            mask = torch.where(
-                sum_signs.abs() >= self.robustLR_threshold,
-                torch.ones_like(sum_signs),
-                -torch.ones_like(sum_signs),
-            )
-            aggregated_params[name] = mask * avg_delta
+            apply_mask = learnable_keys is None or name in learnable_keys
+            if apply_mask:
+                sum_signs = torch.sign(stacked).sum(dim=0)
+                mask = torch.where(
+                    sum_signs.abs() >= self.robustLR_threshold,
+                    torch.ones_like(sum_signs),
+                    -torch.ones_like(sum_signs),
+                )
+                aggregated_params[name] = mask * avg_delta
+            else:
+                aggregated_params[name] = avg_delta
 
         return aggregated_params, context

@@ -9,9 +9,9 @@ from .base_aggregator import BaseAggregator
 @AGGREGATOR_REGISTRY.register("flame_aggregator")
 class FlameAggregator(BaseAggregator):
     """
-    FLAME 聚合器：对良性客户端进行范数裁剪后聚合。
-    裁剪值从 context['clip_value'] 获取（由 FlameScreener 计算）。
-    返回聚合后的纯 delta（不含全局模型权重）。
+    FLAME 聚合器: 对良性客户端进行范数裁剪后聚合.
+    裁剪值从 context['clip_value'] 获取 (由 HdbscanScreener 根据最大良性簇更新范数中位数计算).
+    返回聚合后的纯 delta (不含全局模型权重).
     """
     
     def __init__(self, device='cuda', **kwargs):
@@ -37,11 +37,16 @@ class FlameAggregator(BaseAggregator):
         clip_value = context.get('clip_value', None)
         norm_list = context.get('norm_list', None)
         
-        # 如果没有从 context 获取，则自行计算
+        # 如果没有从 context 获取, 则自行计算 (优先使用良性簇范数中位数)
         if clip_value is None or norm_list is None:
             learnable_keys = self._get_learnable_keys(global_model)
             norm_list = [torch.norm(self._flatten_update(u, learnable_keys)).item() for u in updates]
-            clip_value = float(torch.median(torch.tensor(norm_list)).item())
+            benign_indices = context.get('benign_indices')
+            if benign_indices:
+                benign_norms = [norm_list[i] for i in benign_indices]
+                clip_value = float(torch.median(torch.tensor(benign_norms)).item())
+            else:
+                clip_value = float(torch.median(torch.tensor(norm_list)).item())
             context['clip_value'] = clip_value
             context['norm_list'] = norm_list
         

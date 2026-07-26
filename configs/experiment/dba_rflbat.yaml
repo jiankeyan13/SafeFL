@@ -1,11 +1,9 @@
 # @package _global_
 defaults:
-  - override /algorithm: fedavg
-  - override /attack: batman
+  - override /algorithm: rflbat
+  - override /attack: dba
   - override /model: resnet18
   - override /dataset: cifar10
-
-experiment_name: batman_global_dev_ratio50
 
 client:
   lr: 0.1
@@ -24,9 +22,11 @@ attack:
   malicious_fraction: 0.1
   per_round_fraction: 0.1
   strategies:
-    - name: batman
+    - name: dba
       fraction: 1.0
-      params:
-        layer_selection: global_deviation
-        selected_layer_ratio: 0.5
-        log_selected_layers: true
+      params: {}
+
+logging:
+  use_wandb: true
+  use_csv: true
+  console_metrics: true

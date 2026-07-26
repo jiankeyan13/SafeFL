@@ -41,7 +41,7 @@ class TaskGenerator:
             partitioner: 划分策略实例。
             num_clients: 客户端数量。
             seed: 随机种子。
-            enable_proxy: 为 True 时从训练集按类划出 proxy 样本 (每类 10 条) 并创建 SPLIT_PROXY 任务; 为 False 时不划样本、无 proxy 任务。
+            enable_proxy: 为 True 时从训练集按类划出 proxy 样本 (每类 10 条) 并创建 SPLIT_PROXY 任务; 为 False 时不划样本、无 proxy 任务.
         """
         self.dataset_name = dataset_name
         self.root = root

@@ -89,7 +89,7 @@ class BaseServer:
         Args:
             updates: 客户端上传的 payload 列表，每项须包含 'delta' 与 'num_samples'。
                 delta 可与客户端一致地包含 BN 统计量 buffer 的差分。
-            proxy_loader: 可选的代理数据加载器，用于 BN 校准等后处理。
+            proxy_loader: 可选的代理数据加载器, 用于 BN 校准等后处理.
             client_lr: 本轮客户端实际学习率 (含 schedule), FLTrust 等防御用于对齐 server update.
         """
         context = {
@@ -131,7 +131,7 @@ class BaseServer:
                 else:
                     new_state[key] = value + torch.round(delta_t).to(dtype=value.dtype)
 
-        # 阶段4: 精炼（加载模型 + 可选 BN 校准 / 加噪声等）
+        # 阶段4: 精炼 (加载模型 + 可选 BN 校准 / 加噪声等)
         self.refiner.process(
             self.global_model,
             new_state,

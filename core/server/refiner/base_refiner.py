@@ -5,8 +5,8 @@ from typing import Optional, Dict, Any
 
 class BaseRefiner:
     """
-    精炼器基类。
-    职责：将聚合后的 new_state 应用到全局模型，并执行可选的后处理（如 BN 校准）。
+    精炼器基类.
+    职责: 将聚合后的 new_state 应用到全局模型, 并执行可选的后处理 (如 BN 校准).
     """
     def __init__(self, config=None):
         pass
@@ -18,7 +18,7 @@ class BaseRefiner:
                 device: torch.device = None,
                 context: Dict[str, Any] = None):
         """
-        将 new_state 应用到全局模型。
+        将 new_state 应用到全局模型.
 
         Args:
             global_model: 全局模型
@@ -33,7 +33,7 @@ class BaseRefiner:
             self.calibrate_bn(global_model, calibration_loader, device)
 
     def calibrate_bn(self, model, loader, device):
-        """代理数据BN校准"""
+        """代理数据 BN 校准."""
         model.train()
         if device:
             model.to(device)

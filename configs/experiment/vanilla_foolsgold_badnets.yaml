@@ -1,6 +1,0 @@
-# @package _global_
-defaults:
-  - override /algorithm: foolsgold
-  - override /attack: badnets
-
-experiment_name: foolsgold

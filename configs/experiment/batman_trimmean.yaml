@@ -1,11 +1,9 @@
 # @package _global_
 defaults:
-  - override /algorithm: fedavg
+  - override /algorithm: trim_mean
   - override /attack: batman
   - override /model: resnet18
   - override /dataset: cifar10
-
-experiment_name: batman_random_align5_stats11
 
 client:
   lr: 0.1
@@ -27,12 +25,9 @@ attack:
     - name: batman
       fraction: 1.0
       params:
-        layer_selection: random
         num_selected_layers: 5
-        stats_top_layers: 11
-        layer_selection_seed: 42
-        log_selected_layers: true
 
 logging:
+  use_wandb: true
   use_csv: true
   console_metrics: true

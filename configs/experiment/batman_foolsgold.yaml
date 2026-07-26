@@ -1,12 +1,9 @@
 # @package _global_
 defaults:
-  - override /algorithm: fedavg
+  - override /algorithm: foolsgold
   - override /attack: batman
   - override /model: resnet18
   - override /dataset: cifar10
-
-# NOTE: config.yaml 末尾的 experiment_name=${algorithm.name} 会覆盖此处,
-# 启动时需 CLI 显式传入 experiment_name / logging.name / logging.project.
 
 client:
   lr: 0.1
@@ -28,8 +25,7 @@ attack:
     - name: batman
       fraction: 1.0
       params:
-        layer_selection: random
-        layer_selection_seed: 42
+        num_selected_layers: 5
 
 logging:
   use_wandb: true

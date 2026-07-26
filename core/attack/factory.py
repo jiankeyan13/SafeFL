@@ -44,7 +44,7 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "rank": 4,
         "lamda_reg": 20.0,
         "beta_reg": 15.0,
-        "num_selected_layers": 9,
+        "num_selected_layers": 5,
         "selected_layer_ratio": None,
         "stats_top_layers": None,
         "stats_layer_ratio": None,

@@ -1,6 +1,0 @@
-# @package _global_
-defaults:
-  - override /algorithm: alignins
-  - override /attack: badnets
-
-experiment_name: alignins
