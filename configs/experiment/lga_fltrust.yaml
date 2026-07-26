@@ -5,6 +5,9 @@ defaults:
   - override /model: resnet18
   - override /dataset: cifar10
 
+data:
+  enable_proxy: true
+
 client:
   lr: 0.1
 
