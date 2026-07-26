@@ -4,18 +4,20 @@ LP-Attack: Layer-wise Poisoning via Backdoor-Critical (BC) layers.
 method_1-style flow (no adaptive layer-count search):
 1) Reference long-train from Wg: benign until clean acc >= threshold
    (eval every N epochs, max M epochs), then malicious for 1 epoch.
-   FLS+BLS on this reference pair select BC layers.
-2) Separate local_ep benign/malicious pair from Wg for upload craft.
-3) Craft with lambda=1: BC <- local mal, else <- local benign.
+   FLS + hybrid warm-start greedy BLS on atomic modules (Conv+BN / Linear)
+   select BC groups.
+2) Train a separate local_ep benign/malicious pair from Wg for upload craft.
+3) Craft with lambda=1: start from local benign, replace BC groups
+   with the local malicious weights.
 """
 from __future__ import annotations
 
-import heapq
 import json
 import os
 import re
 import threading
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -27,10 +29,24 @@ from core.utils.registry import ATTACK_REGISTRY
 
 _LAYER_LOG_LOCK = threading.Lock()
 
-# (delta_bsr, param_name); more negative => more backdoor-critical
+# Half-bin default for N_val=125 (resolution 1/125=0.008): eps=0.004
+# so a 1-sample BSR change is Neg/Pos, and only exact-0 deltas are plateau.
+DEFAULT_BLS_EPS = 0.004
+
+# (delta_bsr, group_name); more negative => more backdoor-critical
 LayerScore = Tuple[float, str]
 
 _SAFE_NAME_RE = re.compile(r"[^\w.\-]+")
+_CONV_TO_BN_RE = re.compile(r"(^|\.)conv(\d+)$")
+_BN_TENSOR_SUFFIXES = ("weight", "bias", "running_mean", "running_var")
+
+
+@dataclass(frozen=True)
+class AtomicGroup:
+    """One selectable module: Conv+BN or Linear (weight+bias)."""
+
+    name: str
+    keys: Tuple[str, ...]
 
 
 def _default_layer_score_dir() -> str:
@@ -69,25 +85,41 @@ def build_layer_selection_record(
     ref_benign_acc: Optional[float] = None,
     ref_benign_epochs: Optional[int] = None,
     ref_malicious_epochs: Optional[int] = None,
+    num_atomic_groups: Optional[int] = None,
+    selected_param_keys: Optional[Sequence[str]] = None,
+    group_key_map: Optional[Mapping[str, Sequence[str]]] = None,
+    eps: Optional[float] = None,
+    selection_method: str = "warm_start_greedy",
 ) -> Dict[str, Any]:
+    selected_set = set(attack_list)
     return {
         "round": round_idx,
         "client_id": str(client_id),
         "tau": float(tau),
         "val_ratio": float(val_ratio),
+        "eps": None if eps is None else float(eps),
+        "selection_method": selection_method,
         "bsr_malicious": float(bsr_malicious),
         "final_bsr": None if final_bsr is None else float(final_bsr),
         "ref_benign_acc": None if ref_benign_acc is None else float(ref_benign_acc),
         "ref_benign_epochs": ref_benign_epochs,
         "ref_malicious_epochs": ref_malicious_epochs,
+        "num_atomic_groups": num_atomic_groups,
         "num_selected": len(attack_list),
         "selected_layers": list(attack_list),
+        "selected_param_keys": list(selected_param_keys or []),
+        "group_keys": {
+            name: list(keys)
+            for name, keys in (group_key_map or {}).items()
+            if name in selected_set
+        },
         "layer_scores": [
             {
                 "rank": i,
                 "name": name,
                 "delta_bsr": float(score),
-                "selected": name in attack_list,
+                "selected": name in selected_set,
+                "keys": list((group_key_map or {}).get(name, [])),
             }
             for i, (score, name) in enumerate(ranked)
         ],
@@ -115,11 +147,14 @@ def append_layer_selection_jsonl(score_dir: str, record: Mapping[str, Any]) -> s
         "round": record.get("round"),
         "client_id": record.get("client_id"),
         "tau": record.get("tau"),
+        "eps": record.get("eps"),
+        "selection_method": record.get("selection_method"),
         "bsr_malicious": record.get("bsr_malicious"),
         "final_bsr": record.get("final_bsr"),
         "ref_benign_acc": record.get("ref_benign_acc"),
         "ref_benign_epochs": record.get("ref_benign_epochs"),
         "ref_malicious_epochs": record.get("ref_malicious_epochs"),
+        "num_atomic_groups": record.get("num_atomic_groups"),
         "num_selected": record.get("num_selected"),
         "selected_layers": list(record.get("selected_layers") or []),
         "layer_ranking": [
@@ -169,20 +204,136 @@ def compute_accuracy(
     return compute_bsr(model, loader, device)
 
 
-def eligible_param_names(
+def _available_keys(
+    benign_state: Mapping[str, torch.Tensor],
+    malicious_state: Mapping[str, torch.Tensor],
+):
+    keys = set()
+    for key, val in benign_state.items():
+        if key not in malicious_state:
+            continue
+        if not torch.is_tensor(val) or not torch.is_tensor(malicious_state[key]):
+            continue
+        keys.add(key)
+    return keys
+
+
+def _module_param_keys(module_name: str, available) -> List[str]:
+    prefix = f"{module_name}."
+    return sorted(k for k in available if k.startswith(prefix))
+
+
+def _bn_group_keys(bn_name: str, available) -> List[str]:
+    keys = []
+    for suffix in _BN_TENSOR_SUFFIXES:
+        key = f"{bn_name}.{suffix}"
+        if key in available:
+            keys.append(key)
+    return keys
+
+
+def _paired_bn_name(conv_name: str, bn_names) -> Optional[str]:
+    if conv_name.endswith("shortcut.0"):
+        cand = conv_name[: -len("0")] + "1"
+        return cand if cand in bn_names else None
+    if _CONV_TO_BN_RE.search(conv_name) is None:
+        return None
+    cand = _CONV_TO_BN_RE.sub(r"\1bn\2", conv_name)
+    return cand if cand in bn_names else None
+
+
+def build_atomic_groups(
     model: nn.Module,
     benign_state: Mapping[str, torch.Tensor],
     malicious_state: Mapping[str, torch.Tensor],
+) -> List[AtomicGroup]:
+    """
+    Build selectable atomic modules:
+    - Conv + paired BN (BN: weight/bias/running_mean/running_var)
+    - Linear (weight + bias)
+    Each group counts as one layer for FLS/BLS.
+    """
+    available = _available_keys(benign_state, malicious_state)
+    conv_names: List[str] = []
+    bn_names = set()
+    linear_names: List[str] = []
+
+    for name, module in model.named_modules():
+        if not name:
+            continue
+        if isinstance(module, nn.Conv2d):
+            conv_names.append(name)
+        elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d)):
+            bn_names.add(name)
+        elif isinstance(module, nn.Linear):
+            linear_names.append(name)
+
+    groups: List[AtomicGroup] = []
+    for conv_name in conv_names:
+        keys = _module_param_keys(conv_name, available)
+        bn_name = _paired_bn_name(conv_name, bn_names)
+        if bn_name is not None:
+            keys.extend(_bn_group_keys(bn_name, available))
+            bn_tail = bn_name.split(".")[-1]
+            if bn_tail == "1" and conv_name.endswith("shortcut.0"):
+                group_name = f"{conv_name}+bn"
+            else:
+                group_name = f"{conv_name}+{bn_tail}"
+        else:
+            group_name = conv_name
+        uniq_keys: List[str] = []
+        seen = set()
+        for key in keys:
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq_keys.append(key)
+        if uniq_keys:
+            groups.append(AtomicGroup(name=group_name, keys=tuple(uniq_keys)))
+
+    for linear_name in linear_names:
+        keys = [
+            key
+            for key in (f"{linear_name}.weight", f"{linear_name}.bias")
+            if key in available
+        ]
+        if keys:
+            groups.append(AtomicGroup(name=linear_name, keys=tuple(keys)))
+
+    return groups
+
+
+def expand_group_keys(
+    group_names: Sequence[str],
+    group_map: Mapping[str, Sequence[str]],
 ) -> List[str]:
-    """All named parameters present in both states (no ndim filter)."""
-    names: List[str] = []
-    for name, _param in model.named_parameters():
-        if name not in benign_state or name not in malicious_state:
-            continue
-        if not torch.is_tensor(benign_state[name]) or not torch.is_tensor(malicious_state[name]):
-            continue
-        names.append(name)
-    return names
+    keys: List[str] = []
+    seen = set()
+    for name in group_names:
+        for key in group_map.get(name, []):
+            if key in seen:
+                continue
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def _clone_state(state: Mapping[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    return {
+        k: (v.detach().clone() if torch.is_tensor(v) else v) for k, v in state.items()
+    }
+
+
+def _substitute_keys(
+    base_state: Mapping[str, torch.Tensor],
+    source_state: Mapping[str, torch.Tensor],
+    keys: Sequence[str],
+) -> Dict[str, torch.Tensor]:
+    mixed = _clone_state(base_state)
+    for key in keys:
+        if key in source_state and torch.is_tensor(source_state[key]):
+            mixed[key] = source_state[key].detach().clone()
+    return mixed
 
 
 @torch.no_grad()
@@ -193,12 +344,15 @@ def fls(
     bsr_malicious: float,
     val_loader: DataLoader,
     device: torch.device,
-) -> Tuple[List[str], List[float]]:
+    groups: Optional[Sequence[AtomicGroup]] = None,
+) -> Tuple[List[str], List[float], Dict[str, Tuple[str, ...]]]:
     """
-    Forward Layer Substitution: replace each malicious param with benign,
-    measure BSR drop. More negative delta => more backdoor-critical.
+    Forward Layer Substitution over atomic groups:
+    replace each malicious group with benign, measure BSR drop.
     """
-    param_names = eligible_param_names(model, benign_state, malicious_state)
+    if groups is None:
+        groups = build_atomic_groups(model, benign_state, malicious_state)
+    group_map = {g.name: g.keys for g in groups}
     key_arr: List[str] = []
     value_arr: List[float] = []
 
@@ -206,20 +360,53 @@ def fls(
     was_training = eval_model.training
     eval_model.eval()
 
-    for name in param_names:
-        mixed = {
-            k: (v.detach().clone() if torch.is_tensor(v) else v)
-            for k, v in malicious_state.items()
-        }
-        mixed[name] = benign_state[name].detach().clone()
+    for group in groups:
+        mixed = _substitute_keys(malicious_state, benign_state, group.keys)
         eval_model.load_state_dict(mixed, strict=False)
         bsr = compute_bsr(eval_model, val_loader, device)
-        key_arr.append(name)
+        key_arr.append(group.name)
         value_arr.append(float(bsr) - float(bsr_malicious))
 
     if was_training:
         eval_model.train()
-    return key_arr, value_arr
+    return key_arr, value_arr, group_map
+
+
+def _group_param_l2(
+    group_keys: Sequence[str],
+    benign_state: Mapping[str, torch.Tensor],
+    malicious_state: Mapping[str, torch.Tensor],
+) -> float:
+    """L2 parameter shift of a group; used only as a tie-break (not network order)."""
+    total = 0.0
+    for key in group_keys:
+        if key not in benign_state or key not in malicious_state:
+            continue
+        b = benign_state[key]
+        m = malicious_state[key]
+        if not torch.is_tensor(b) or not torch.is_tensor(m):
+            continue
+        total += float((m.detach().float() - b.detach().float()).pow(2).sum().item())
+    return total
+
+
+@torch.no_grad()
+def _eval_selected_bsr(
+    model: nn.Module,
+    selected: Sequence[str],
+    benign_state: Mapping[str, torch.Tensor],
+    malicious_state: Mapping[str, torch.Tensor],
+    val_loader: DataLoader,
+    device: torch.device,
+    group_map: Mapping[str, Sequence[str]],
+) -> float:
+    mixed = _substitute_keys(
+        benign_state,
+        malicious_state,
+        expand_group_keys(selected, group_map),
+    )
+    model.load_state_dict(mixed, strict=False)
+    return compute_bsr(model, val_loader, device)
 
 
 @torch.no_grad()
@@ -232,39 +419,171 @@ def bls(
     bsr_malicious: float,
     val_loader: DataLoader,
     device: torch.device,
+    group_map: Mapping[str, Sequence[str]],
     tau: float = 0.95,
+    eps: float = DEFAULT_BLS_EPS,
 ) -> Tuple[List[str], Optional[float]]:
     """
-    Backward Layer Substitution: greedily add most critical layers into a
-    benign model until BSR >= tau * BSR_mal.
+    Hybrid warm-start greedy + backtracking pruning over atomic groups.
+
+    1) Warm-start: greedily add FLS-negative layers (delta < -eps), most negative first.
+    2) Conditional greedy on plateau layers (|delta| <= eps); expand to positive on stall.
+    3) If single-layer gains stall, try the best complementary pair; else L2 tie-break.
+    4) Backtracking prune while BSR stays >= tau * BSR_mal.
     """
     if not key_arr:
         return [], None
 
     threshold = float(bsr_malicious) * float(tau)
-    n = 1
-    temp_bsr = 0.0
-    attack_list: List[str] = []
+    eps = float(eps)
+    delta = {key_arr[i]: float(value_arr[i]) for i in range(len(key_arr))}
+
+    neg = [g for g in key_arr if delta[g] < -eps]
+    zero = [g for g in key_arr if abs(delta[g]) <= eps]
+    pos = [g for g in key_arr if delta[g] > eps]
+
     was_training = model.training
     model.eval()
 
-    while temp_bsr < threshold and n <= len(key_arr):
-        min_idxs = heapq.nsmallest(n, range(len(value_arr)), key=value_arr.__getitem__)
-        attack_list = [key_arr[i] for i in min_idxs]
-        mixed = {
-            k: (v.detach().clone() if torch.is_tensor(v) else v)
-            for k, v in benign_state.items()
-        }
-        for layer in attack_list:
-            if layer in malicious_state and torch.is_tensor(malicious_state[layer]):
-                mixed[layer] = malicious_state[layer].detach().clone()
-        model.load_state_dict(mixed, strict=False)
-        temp_bsr = compute_bsr(model, val_loader, device)
-        n += 1
+    selected: List[str] = []
+    selected_set = set()
+    cur_bsr = _eval_selected_bsr(
+        model, selected, benign_state, malicious_state, val_loader, device, group_map
+    )
+
+    # Phase 1: warm-start — add Neg one-by-one, most negative first.
+    for g in sorted(neg, key=lambda name: (delta[name], name)):
+        if cur_bsr >= threshold:
+            break
+        selected.append(g)
+        selected_set.add(g)
+        cur_bsr = _eval_selected_bsr(
+            model, selected, benign_state, malicious_state, val_loader, device, group_map
+        )
+
+    def _l2(name: str) -> float:
+        return _group_param_l2(group_map.get(name, ()), benign_state, malicious_state)
+
+    def _best_single(candidates: Sequence[str]) -> Tuple[Optional[str], float, float]:
+        best_name: Optional[str] = None
+        best_gain = float("-inf")
+        best_bsr = cur_bsr
+        best_l2 = float("-inf")
+        for g in candidates:
+            trial = selected + [g]
+            bsr = _eval_selected_bsr(
+                model, trial, benign_state, malicious_state, val_loader, device, group_map
+            )
+            gain = float(bsr) - float(cur_bsr)
+            l2 = _l2(g)
+            # Prefer higher gain; tie-break by larger param shift (not network index).
+            if (
+                best_name is None
+                or gain > best_gain + 1e-15
+                or (abs(gain - best_gain) <= 1e-15 and l2 > best_l2)
+            ):
+                best_name = g
+                best_gain = gain
+                best_bsr = float(bsr)
+                best_l2 = l2
+        return best_name, best_gain, best_bsr
+
+    def _best_pair(candidates: Sequence[str]) -> Tuple[Optional[Tuple[str, str]], float, float]:
+        best_pair: Optional[Tuple[str, str]] = None
+        best_gain = float("-inf")
+        best_bsr = cur_bsr
+        best_l2 = float("-inf")
+        n = len(candidates)
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = candidates[i], candidates[j]
+                trial = selected + [a, b]
+                bsr = _eval_selected_bsr(
+                    model,
+                    trial,
+                    benign_state,
+                    malicious_state,
+                    val_loader,
+                    device,
+                    group_map,
+                )
+                gain = float(bsr) - float(cur_bsr)
+                l2 = _l2(a) + _l2(b)
+                if (
+                    best_pair is None
+                    or gain > best_gain + 1e-15
+                    or (abs(gain - best_gain) <= 1e-15 and l2 > best_l2)
+                ):
+                    best_pair = (a, b)
+                    best_gain = gain
+                    best_bsr = float(bsr)
+                    best_l2 = l2
+        return best_pair, best_gain, best_bsr
+
+    # Phase 2: conditional greedy on plateau (then positive if needed).
+    candidates = [g for g in zero if g not in selected_set]
+    pos_pending = [g for g in pos if g not in selected_set]
+    pos_merged = False
+
+    while cur_bsr < threshold:
+        pool = [g for g in candidates if g not in selected_set]
+        if not pool:
+            if not pos_merged and pos_pending:
+                candidates = list(dict.fromkeys(candidates + pos_pending))
+                pos_merged = True
+                continue
+            break
+
+        g_star, gain, new_bsr = _best_single(pool)
+        if g_star is not None and gain > eps:
+            selected.append(g_star)
+            selected_set.add(g_star)
+            cur_bsr = new_bsr
+            continue
+
+        # Stall: expand positive layers into the candidate pool once.
+        if not pos_merged and pos_pending:
+            candidates = list(dict.fromkeys(candidates + pos_pending))
+            pos_merged = True
+            continue
+
+        # Complementary pair probe among remaining candidates.
+        pair, pair_gain, pair_bsr = _best_pair(pool)
+        if pair is not None and pair_gain > eps:
+            for g in pair:
+                if g not in selected_set:
+                    selected.append(g)
+                    selected_set.add(g)
+            cur_bsr = pair_bsr
+            continue
+
+        # Last resort: force-add the best single by (gain, L2) to escape deadlock.
+        if g_star is None:
+            break
+        selected.append(g_star)
+        selected_set.add(g_star)
+        cur_bsr = new_bsr
+
+    # Phase 3: backtracking prune — drop any layer that is not necessary for tau.
+    changed = True
+    while changed and selected:
+        changed = False
+        # Try removals in reverse addition order first (later adds more likely redundant).
+        for idx in range(len(selected) - 1, -1, -1):
+            trial = selected[:idx] + selected[idx + 1 :]
+            bsr = _eval_selected_bsr(
+                model, trial, benign_state, malicious_state, val_loader, device, group_map
+            )
+            if float(bsr) >= threshold:
+                selected = trial
+                selected_set = set(selected)
+                cur_bsr = float(bsr)
+                changed = True
+                break
 
     if was_training:
         model.train()
-    return list(attack_list), float(temp_bsr)
+    return list(selected), float(cur_bsr)
 
 
 def craft_lp_state(
@@ -275,7 +594,11 @@ def craft_lp_state(
     lambda_scale: float = 1.0,
 ) -> Dict[str, torch.Tensor]:
     """
-    Craft LP weights. At lambda=1: BC layers <- malicious, others <- benign.
+    Official-style craft (Eq.4). At lambda=1:
+    BC param keys <- malicious, others <- benign (local benign as base).
+
+    attack_list must be state_dict keys already expanded from atomic groups
+    (e.g. selecting conv1+bn1 replaces conv1.weight and all BN tensors together).
     """
     attack_set = set(attack_list)
     lam = float(lambda_scale)
@@ -301,6 +624,24 @@ def craft_lp_state(
     return crafted
 
 
+def craft_lp_state_from_groups(
+    benign_state: Mapping[str, torch.Tensor],
+    malicious_state: Mapping[str, torch.Tensor],
+    global_state: Mapping[str, torch.Tensor],
+    attack_groups: Sequence[str],
+    group_map: Mapping[str, Sequence[str]],
+    lambda_scale: float = 1.0,
+) -> Dict[str, torch.Tensor]:
+    """Craft by atomic groups: expand selected modules, then swap all member keys."""
+    return craft_lp_state(
+        benign_state=benign_state,
+        malicious_state=malicious_state,
+        global_state=global_state,
+        attack_list=expand_group_keys(attack_groups, group_map),
+        lambda_scale=lambda_scale,
+    )
+
+
 def assemble_lp_state(
     benign_state: Mapping[str, torch.Tensor],
     malicious_state: Mapping[str, torch.Tensor],
@@ -319,7 +660,8 @@ def assemble_lp_state(
 @ATTACK_REGISTRY.register("lp")
 class LPAttack:
     """
-    Upload-stage LP attack: reference long-train FLS+BLS(tau), craft with lambda=1.
+    Upload-stage LP attack: reference FLS + warm-start greedy BLS(tau) on atomic groups;
+    craft = local benign + local-mal BC.
     """
 
     client_class = None
@@ -333,12 +675,14 @@ class LPAttack:
         patch_location: str = "bottom_right",
         seed: Optional[int] = None,
         tau: float = 0.95,
-        val_ratio: float = 0.2,
+        val_ratio: float = 0.25,
         lambda_scale: float = 1.0,
         ref_benign_acc_threshold: float = 0.93,
         ref_benign_max_epochs: int = 32,
         ref_benign_eval_every: int = 4,
         ref_malicious_epochs: int = 1,
+        # Half-bin for N_val=125 (1/125=0.008): only exact-0 FLS deltas are plateau.
+        eps: float = DEFAULT_BLS_EPS,
         log_selected_layers: bool = True,
         layer_score_dir: Optional[str] = None,
         # Backward-compatible aliases / ignored legacy knobs.
@@ -377,12 +721,16 @@ class LPAttack:
         self.ref_benign_max_epochs = int(ref_benign_max_epochs)
         self.ref_benign_eval_every = max(1, int(ref_benign_eval_every))
         self.ref_malicious_epochs = max(1, int(ref_malicious_epochs))
+        self.eps = float(eps)
         self.log_selected_layers = log_selected_layers
         self.layer_score_dir = layer_score_dir
 
         self._benign_states: Dict[str, Dict[str, torch.Tensor]] = {}
         self._malicious_states: Dict[str, Dict[str, torch.Tensor]] = {}
+        # Expanded state_dict keys for craft; always derived from atomic groups.
         self._attack_lists: Dict[str, List[str]] = {}
+        self._attack_groups: Dict[str, List[str]] = {}
+        self._group_maps: Dict[str, Dict[str, Tuple[str, ...]]] = {}
 
     def poison_dataset(
         self,
@@ -425,7 +773,20 @@ class LPAttack:
         return self._malicious_states.pop(key)
 
     def set_attack_list(self, client_id: str, attack_list: Sequence[str]) -> None:
+        """Cache expanded state_dict keys used by craft (atomic-group expanded)."""
         self._attack_lists[str(client_id)] = list(attack_list)
+
+    def set_attack_groups(
+        self,
+        client_id: str,
+        attack_groups: Sequence[str],
+        group_map: Mapping[str, Sequence[str]],
+    ) -> None:
+        """Cache selected atomic groups and expand them into craft keys."""
+        cid = str(client_id)
+        self._attack_groups[cid] = list(attack_groups)
+        self._group_maps[cid] = {name: tuple(keys) for name, keys in group_map.items()}
+        self.set_attack_list(cid, expand_group_keys(attack_groups, group_map))
 
     def _resolve_score_dir(self) -> str:
         if self.layer_score_dir:
@@ -457,19 +818,21 @@ class LPAttack:
         ref_benign_epochs: Optional[int] = None,
         ref_malicious_epochs: Optional[int] = None,
     ) -> Tuple[List[str], Dict[str, Any]]:
-        """FLS + BLS(tau) on the reference long-train pair; return BC list."""
+        """FLS + warm-start greedy BLS(tau) on atomic groups; cache expanded keys for craft."""
         model.load_state_dict(malicious_state, strict=False)
         bsr_mal = compute_bsr(model, val_loader, device)
 
-        key_arr, value_arr = fls(
+        groups = build_atomic_groups(model, benign_state, malicious_state)
+        key_arr, value_arr, group_map = fls(
             model=model,
             benign_state=benign_state,
             malicious_state=malicious_state,
             bsr_malicious=bsr_mal,
             val_loader=val_loader,
             device=device,
+            groups=groups,
         )
-        attack_list, final_bsr = bls(
+        attack_groups, final_bsr = bls(
             model=model,
             key_arr=key_arr,
             value_arr=value_arr,
@@ -478,8 +841,11 @@ class LPAttack:
             bsr_malicious=bsr_mal,
             val_loader=val_loader,
             device=device,
+            group_map=group_map,
             tau=self.tau,
+            eps=self.eps,
         )
+        expanded_keys = expand_group_keys(attack_groups, group_map)
         ranked: List[LayerScore] = sorted(
             [(float(value_arr[i]), key_arr[i]) for i in range(len(key_arr))],
             key=lambda x: x[0],
@@ -488,7 +854,7 @@ class LPAttack:
         record = build_layer_selection_record(
             client_id=cid,
             round_idx=round_idx,
-            attack_list=attack_list,
+            attack_list=attack_groups,
             ranked=ranked,
             bsr_malicious=float(bsr_mal),
             tau=self.tau,
@@ -497,10 +863,16 @@ class LPAttack:
             ref_benign_acc=ref_benign_acc,
             ref_benign_epochs=ref_benign_epochs,
             ref_malicious_epochs=ref_malicious_epochs,
+            num_atomic_groups=len(groups),
+            selected_param_keys=expanded_keys,
+            group_key_map=group_map,
+            eps=self.eps,
+            selection_method="warm_start_greedy",
         )
-        self.set_attack_list(cid, attack_list)
+        # Craft replaces by atomic groups: expand selected groups to all member keys.
+        self.set_attack_groups(cid, attack_groups, group_map)
         self._persist_layer_selection(record)
-        return list(attack_list), record
+        return list(attack_groups), record
 
     def poison_upload(
         self,
@@ -512,7 +884,7 @@ class LPAttack:
         num_samples: Optional[int] = None,
         **kwargs: Any,
     ) -> Dict[str, torch.Tensor]:
-        """Craft LP weights from local_ep pair + BC list, return delta."""
+        """Craft LP weights: local benign + atomic-group BC from local mal."""
         del update, num_samples, round_idx
         kwargs.clear()
 
@@ -520,20 +892,26 @@ class LPAttack:
             raise ValueError("LPAttack.poison_upload requires client_id")
 
         cid = str(client_id)
+        # benign_state here is the local benign model used as craft base.
         benign_state = self.pop_benign_state(cid)
         malicious_state = self.pop_malicious_state(cid)
-        attack_list = self._attack_lists.pop(cid, None)
-        if attack_list is None:
+
+        # Always craft by atomic groups: expand selected modules to all member keys.
+        attack_groups = self._attack_groups.pop(cid, None)
+        group_map = self._group_maps.pop(cid, None)
+        self._attack_lists.pop(cid, None)
+        if attack_groups is None or group_map is None:
             raise RuntimeError(
-                f"LPAttack missing attack_list for client {cid}; "
+                f"LPAttack missing attack groups for client {cid}; "
                 "run identify_bc_layers before package"
             )
 
-        crafted = craft_lp_state(
+        crafted = craft_lp_state_from_groups(
             benign_state=benign_state,
             malicious_state=malicious_state,
             global_state=initial_weights,
-            attack_list=attack_list,
+            attack_groups=attack_groups,
+            group_map=group_map,
             lambda_scale=self.lambda_scale,
         )
         return {

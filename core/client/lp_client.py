@@ -3,8 +3,10 @@ LP malicious client aligned with method_1-style LP flow.
 
 Each selected round:
 1) Reference long-train from Wg: benign until clean train acc >= threshold
-   (eval every N epochs, max M), then malicious for 1 epoch; FLS+BLS on that pair.
+   (eval every N epochs, max M), then malicious for 1 epoch; FLS + warm-start
+   greedy BLS on that pair.
 2) Separate local_ep benign/malicious pair from Wg for upload craft.
+3) Craft upload: put local-malicious BC layers onto the local benign model.
 """
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ from data.task import TaskSet
 
 
 class LPClient(MaliciousClient):
-    """MaliciousClient with reference long-train selection + local_ep craft."""
+    """MaliciousClient with reference long-train selection + local craft pair."""
 
     def __init__(
         self,
@@ -63,7 +65,7 @@ class LPClient(MaliciousClient):
         return getattr(self.attack_profile, name, default)
 
     def _val_ratio(self) -> float:
-        return float(self._attr("val_ratio", 0.2))
+        return float(self._attr("val_ratio", 0.25))
 
     def _setup_lp_loaders(self) -> None:
         """Split local train into train/val; build clean + poison loaders."""
@@ -217,7 +219,7 @@ class LPClient(MaliciousClient):
         initial_state: Dict[str, torch.Tensor],
     ) -> Dict[str, Any]:
         """
-        Serial reference long-train from Wg for FLS/BLS:
+        Serial reference long-train from Wg for FLS / warm-start greedy BLS:
         benign until clean-train acc >= threshold (checked every eval_every epochs,
         max max_epochs), then malicious for ref_malicious_epochs.
         """
@@ -297,10 +299,10 @@ class LPClient(MaliciousClient):
         self._last_initial_state = initial_state
         local_epochs = int(self.config.trainer_config.epochs)
 
-        # 1) Reference long-train pair -> FLS + BLS select BC layers.
+        # 1) Reference long-train pair -> FLS + warm-start greedy BLS select BC groups.
         self._layer_selection_record = self._run_reference_train(initial_state)
 
-        # 2) Separate local_ep upload pair from the same Wg.
+        # 2) Local benign / malicious pair from the same Wg for craft.
         self.model.load_state_dict(initial_state, strict=False)
         self._train_one_model(
             self.model,
