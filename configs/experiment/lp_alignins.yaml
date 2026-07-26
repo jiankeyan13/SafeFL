@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - override /algorithm: fedavg
+  - override /algorithm: alignins
   - override /attack: lp
   - override /model: resnet18
   - override /dataset: cifar10
@@ -27,6 +27,6 @@ attack:
       params: {}
 
 logging:
-  use_wandb: false
+  use_wandb: true
   use_csv: true
   console_metrics: true

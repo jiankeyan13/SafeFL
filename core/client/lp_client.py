@@ -228,9 +228,9 @@ class LPClient(MaliciousClient):
 
         from core.attack.upload.lp import compute_accuracy
 
-        threshold = float(self._attr("ref_benign_acc_threshold", 0.9))
-        max_epochs = int(self._attr("ref_benign_max_epochs", 30))
-        eval_every = max(1, int(self._attr("ref_benign_eval_every", 3)))
+        threshold = float(self._attr("ref_benign_acc_threshold", 0.93))
+        max_epochs = int(self._attr("ref_benign_max_epochs", 32))
+        eval_every = max(1, int(self._attr("ref_benign_eval_every", 4)))
         mal_epochs = max(1, int(self._attr("ref_malicious_epochs", 1)))
 
         self.model.load_state_dict(initial_state, strict=False)
