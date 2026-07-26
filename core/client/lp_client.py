@@ -2,9 +2,9 @@
 LP malicious client aligned with method_1-style LP flow.
 
 Each selected round:
-1) Train local_ep benign/malicious pair from Wg.
-2) FLS + BLS(tau) on that pair to pick BC layers (no LSA long-train, no cache).
-3) Craft upload in poison_upload (lambda=1 by default).
+1) Reference long-train from Wg: benign until clean train acc >= threshold
+   (eval every N epochs, max M), then malicious for 1 epoch; FLS+BLS on that pair.
+2) Separate local_ep benign/malicious pair from Wg for upload craft.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from data.task import TaskSet
 
 
 class LPClient(MaliciousClient):
-    """MaliciousClient with per-round FLS+BLS selection and local_ep craft."""
+    """MaliciousClient with reference long-train selection + local_ep craft."""
 
     def __init__(
         self,
@@ -212,6 +212,72 @@ class LPClient(MaliciousClient):
             for k, v in model.state_dict().items()
         }
 
+    def _run_reference_train(
+        self,
+        initial_state: Dict[str, torch.Tensor],
+    ) -> Dict[str, Any]:
+        """
+        Serial reference long-train from Wg for FLS/BLS:
+        benign until clean-train acc >= threshold (checked every eval_every epochs,
+        max max_epochs), then malicious for ref_malicious_epochs.
+        """
+        assert self.attack_profile is not None
+        assert self.clean_train_loader is not None
+        assert self.poison_train_loader is not None
+        assert self.poison_val_loader is not None
+
+        from core.attack.upload.lp import compute_accuracy
+
+        threshold = float(self._attr("ref_benign_acc_threshold", 0.9))
+        max_epochs = int(self._attr("ref_benign_max_epochs", 30))
+        eval_every = max(1, int(self._attr("ref_benign_eval_every", 3)))
+        mal_epochs = max(1, int(self._attr("ref_malicious_epochs", 1)))
+
+        self.model.load_state_dict(initial_state, strict=False)
+        benign_acc = compute_accuracy(
+            self.model, self.clean_train_loader, self.device
+        )
+        benign_epochs = 0
+
+        # Each call of _train_one_model(..., num_epochs=1) = 1 full DataLoader pass.
+        while benign_acc < threshold and benign_epochs < max_epochs:
+            self._train_one_model(
+                self.model,
+                self.clean_train_loader,
+                num_epochs=1,
+                apply_hooks=False,
+            )
+            benign_epochs += 1
+            if benign_epochs % eval_every == 0:
+                benign_acc = compute_accuracy(
+                    self.model, self.clean_train_loader, self.device
+                )
+
+        ref_benign_state = self._clone_state(self.model)
+
+        # Malicious continues from the converged benign checkpoint.
+        self._train_one_model(
+            self.model,
+            self.poison_train_loader,
+            num_epochs=mal_epochs,
+            apply_hooks=False,
+        )
+        ref_malicious_state = self._clone_state(self.model)
+
+        _, record = self.attack_profile.identify_bc_layers(
+            self.model,
+            client_id=self.owner_id,
+            benign_state=ref_benign_state,
+            malicious_state=ref_malicious_state,
+            val_loader=self.poison_val_loader,
+            device=self.device,
+            round_idx=self.round_idx,
+            ref_benign_acc=benign_acc,
+            ref_benign_epochs=benign_epochs,
+            ref_malicious_epochs=mal_epochs,
+        )
+        return record
+
     def train(self) -> Dict[str, Any]:
         if self.clean_train_loader is None or self.poison_train_loader is None:
             raise RuntimeError("LPClient loaders are not initialized")
@@ -231,7 +297,10 @@ class LPClient(MaliciousClient):
         self._last_initial_state = initial_state
         local_epochs = int(self.config.trainer_config.epochs)
 
-        # 1) local_ep benign / malicious pair from the same Wg.
+        # 1) Reference long-train pair -> FLS + BLS select BC layers.
+        self._layer_selection_record = self._run_reference_train(initial_state)
+
+        # 2) Separate local_ep upload pair from the same Wg.
         self.model.load_state_dict(initial_state, strict=False)
         self._train_one_model(
             self.model,
@@ -251,17 +320,6 @@ class LPClient(MaliciousClient):
         )
         malicious_state = self._clone_state(self.model)
         self.attack_profile.cache_malicious_state(self.owner_id, malicious_state)
-
-        # 2) Every selected round: re-select BC layers via FLS + BLS(tau).
-        _, self._layer_selection_record = self.attack_profile.identify_bc_layers(
-            self.model,
-            client_id=self.owner_id,
-            benign_state=benign_state,
-            malicious_state=malicious_state,
-            val_loader=self.poison_val_loader,
-            device=self.device,
-            round_idx=self.round_idx,
-        )
 
         current_state = self.model.state_dict()
         delta = {

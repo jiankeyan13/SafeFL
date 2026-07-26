@@ -1,10 +1,12 @@
 """
 LP-Attack: Layer-wise Poisoning via Backdoor-Critical (BC) layers.
 
-method_1-style flow (no LSA long-train, no adaptive layer-count search):
-1) Each selected round: train local_ep benign/malicious pair from Wg.
-2) FLS on all named parameters; BLS with threshold tau * BSR_mal.
-3) Craft upload with lambda=1: BC <- local mal, else <- local benign.
+method_1-style flow (no adaptive layer-count search):
+1) Reference long-train from Wg: benign until clean acc >= threshold
+   (eval every N epochs, max M epochs), then malicious for 1 epoch.
+   FLS+BLS on this reference pair select BC layers.
+2) Separate local_ep benign/malicious pair from Wg for upload craft.
+3) Craft with lambda=1: BC <- local mal, else <- local benign.
 """
 from __future__ import annotations
 
@@ -66,6 +68,9 @@ def build_layer_selection_record(
     tau: float,
     val_ratio: float,
     final_bsr: Optional[float] = None,
+    ref_benign_acc: Optional[float] = None,
+    ref_benign_epochs: Optional[int] = None,
+    ref_malicious_epochs: Optional[int] = None,
 ) -> Dict[str, Any]:
     return {
         "round": round_idx,
@@ -74,6 +79,9 @@ def build_layer_selection_record(
         "val_ratio": float(val_ratio),
         "bsr_malicious": float(bsr_malicious),
         "final_bsr": None if final_bsr is None else float(final_bsr),
+        "ref_benign_acc": None if ref_benign_acc is None else float(ref_benign_acc),
+        "ref_benign_epochs": ref_benign_epochs,
+        "ref_malicious_epochs": ref_malicious_epochs,
         "num_selected": len(attack_list),
         "selected_layers": list(attack_list),
         "layer_scores": [
@@ -118,6 +126,16 @@ def compute_bsr(
         correct += int(preds.eq(target).sum().item())
         total += int(target.size(0))
     return float(correct) / float(total) if total > 0 else 0.0
+
+
+@torch.no_grad()
+def compute_accuracy(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+) -> float:
+    """Clean-task accuracy on a loader with original labels."""
+    return compute_bsr(model, loader, device)
 
 
 def eligible_param_names(
@@ -270,7 +288,7 @@ def assemble_lp_state(
 @ATTACK_REGISTRY.register("lp")
 class LPAttack:
     """
-    Upload-stage LP attack: each round FLS+BLS(tau), craft with lambda=1.
+    Upload-stage LP attack: reference long-train FLS+BLS(tau), craft with lambda=1.
     """
 
     client_class = None
@@ -286,6 +304,10 @@ class LPAttack:
         tau: float = 0.95,
         val_ratio: float = 0.2,
         lambda_scale: float = 1.0,
+        ref_benign_acc_threshold: float = 0.9,
+        ref_benign_max_epochs: int = 30,
+        ref_benign_eval_every: int = 3,
+        ref_malicious_epochs: int = 1,
         log_selected_layers: bool = True,
         layer_score_dir: Optional[str] = None,
         # Backward-compatible aliases / ignored legacy knobs.
@@ -320,6 +342,10 @@ class LPAttack:
         self.tau = float(tau)
         self.val_ratio = float(val_ratio)
         self.lambda_scale = float(lambda_scale)
+        self.ref_benign_acc_threshold = float(ref_benign_acc_threshold)
+        self.ref_benign_max_epochs = int(ref_benign_max_epochs)
+        self.ref_benign_eval_every = max(1, int(ref_benign_eval_every))
+        self.ref_malicious_epochs = max(1, int(ref_malicious_epochs))
         self.log_selected_layers = log_selected_layers
         self.layer_score_dir = layer_score_dir
 
@@ -379,11 +405,15 @@ class LPAttack:
         if not self.log_selected_layers:
             return
         _logger.info(
-            "LP BC layers=%d tau=%.3f BSR_mal=%.4f final_bsr=%s round=%s client=%s layers=%s",
+            "LP BC layers=%d tau=%.3f BSR_mal=%.4f final_bsr=%s "
+            "ref_acc=%s ref_ben_ep=%s ref_mal_ep=%s round=%s client=%s layers=%s",
             record.get("num_selected", 0),
             record.get("tau", self.tau),
             record.get("bsr_malicious", 0.0),
             record.get("final_bsr"),
+            record.get("ref_benign_acc"),
+            record.get("ref_benign_epochs"),
+            record.get("ref_malicious_epochs"),
             record.get("round"),
             record.get("client_id"),
             record.get("selected_layers", []),
@@ -400,8 +430,11 @@ class LPAttack:
         val_loader: DataLoader,
         device: torch.device,
         round_idx: Optional[int] = None,
+        ref_benign_acc: Optional[float] = None,
+        ref_benign_epochs: Optional[int] = None,
+        ref_malicious_epochs: Optional[int] = None,
     ) -> Tuple[List[str], Dict[str, Any]]:
-        """FLS + BLS(tau) on the current-round local pair; return BC list."""
+        """FLS + BLS(tau) on the reference long-train pair; return BC list."""
         model.load_state_dict(malicious_state, strict=False)
         bsr_mal = compute_bsr(model, val_loader, device)
 
@@ -438,6 +471,9 @@ class LPAttack:
             tau=self.tau,
             val_ratio=self.val_ratio,
             final_bsr=final_bsr,
+            ref_benign_acc=ref_benign_acc,
+            ref_benign_epochs=ref_benign_epochs,
+            ref_malicious_epochs=ref_malicious_epochs,
         )
         self.set_attack_list(cid, attack_list)
         self._log_selected_layers(record)
