@@ -1,17 +1,21 @@
 """
 LP-Attack: Layer-wise Poisoning via Backdoor-Critical (BC) layers.
 
-method_1-style flow (no adaptive layer-count search):
-1) Reference long-train from Wg: benign until clean acc >= threshold
-   (eval every N epochs, max M epochs), then malicious for 1 epoch.
-   FLS + hybrid warm-start greedy BLS on atomic modules (Conv+BN / Linear)
-   select BC groups.
-2) Train a separate local_ep benign/malicious pair from Wg for upload craft.
-3) Craft with lambda=1: start from local benign, replace BC groups
-   with the local malicious weights.
+Flow (no adaptive layer-count search):
+1) Reference long-train from Wg on the train split only (excludes held-out val):
+   benign until clean train acc >= ref_benign_acc_threshold (eval every epoch),
+   then malicious until ASR >= ref_malicious_asr_threshold (eval every epoch;
+   ASR on held-out poison val). FLS + hybrid warm-start greedy BLS on atomic
+   modules (Conv+BN / Linear) select BC groups (BSR on held-out val).
+   Craft/substitution swaps weight/bias only; BN running stats stay benign.
+2) Local benign + local malicious train from Wg for local_ep on full local data
+   (clean full / poison full).
+3) Craft with lambda=1: start from local benign, replace BC groups with the
+   local malicious weights.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -29,9 +33,9 @@ from core.utils.registry import ATTACK_REGISTRY
 
 _LAYER_LOG_LOCK = threading.Lock()
 
-# Half-bin default for N_val=125 (resolution 1/125=0.008): eps=0.004
+# Half-bin default for N_val=125 (resolution 1/125=0.008): eps=0.005
 # so a 1-sample BSR change is Neg/Pos, and only exact-0 deltas are plateau.
-DEFAULT_BLS_EPS = 0.004
+DEFAULT_BLS_EPS = 0.005
 
 # (delta_bsr, group_name); more negative => more backdoor-critical
 LayerScore = Tuple[float, str]
@@ -39,6 +43,22 @@ LayerScore = Tuple[float, str]
 _SAFE_NAME_RE = re.compile(r"[^\w.\-]+")
 _CONV_TO_BN_RE = re.compile(r"(^|\.)conv(\d+)$")
 _BN_TENSOR_SUFFIXES = ("weight", "bias", "running_mean", "running_var")
+_BN_STAT_SUFFIXES = ("running_mean", "running_var", "num_batches_tracked")
+
+
+def derive_lp_seed(base_seed: int, *parts: Any) -> int:
+    """Stable 63-bit seed from global seed + parts (process-independent)."""
+    raw = "|".join(str(p) for p in (int(base_seed), *parts))
+    digest = hashlib.md5(raw.encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
+
+def _is_bn_stat_key(key: str) -> bool:
+    """BN running stats are kept from the benign base; only weight/bias are swapped."""
+    return any(key.endswith(f".{suffix}") for suffix in _BN_STAT_SUFFIXES)
+
+
+def _replaceable_keys(keys: Sequence[str]) -> List[str]:
+    return [key for key in keys if not _is_bn_stat_key(key)]
 
 
 @dataclass(frozen=True)
@@ -84,6 +104,7 @@ def build_layer_selection_record(
     final_bsr: Optional[float] = None,
     ref_benign_acc: Optional[float] = None,
     ref_benign_epochs: Optional[int] = None,
+    ref_malicious_asr: Optional[float] = None,
     ref_malicious_epochs: Optional[int] = None,
     num_atomic_groups: Optional[int] = None,
     selected_param_keys: Optional[Sequence[str]] = None,
@@ -103,6 +124,7 @@ def build_layer_selection_record(
         "final_bsr": None if final_bsr is None else float(final_bsr),
         "ref_benign_acc": None if ref_benign_acc is None else float(ref_benign_acc),
         "ref_benign_epochs": ref_benign_epochs,
+        "ref_malicious_asr": None if ref_malicious_asr is None else float(ref_malicious_asr),
         "ref_malicious_epochs": ref_malicious_epochs,
         "num_atomic_groups": num_atomic_groups,
         "num_selected": len(attack_list),
@@ -153,6 +175,7 @@ def append_layer_selection_jsonl(score_dir: str, record: Mapping[str, Any]) -> s
         "final_bsr": record.get("final_bsr"),
         "ref_benign_acc": record.get("ref_benign_acc"),
         "ref_benign_epochs": record.get("ref_benign_epochs"),
+        "ref_malicious_asr": record.get("ref_malicious_asr"),
         "ref_malicious_epochs": record.get("ref_malicious_epochs"),
         "num_atomic_groups": record.get("num_atomic_groups"),
         "num_selected": record.get("num_selected"),
@@ -249,7 +272,7 @@ def build_atomic_groups(
 ) -> List[AtomicGroup]:
     """
     Build selectable atomic modules:
-    - Conv + paired BN (BN: weight/bias/running_mean/running_var)
+    - Conv + paired BN (group tracks all BN tensors; swap uses weight/bias only)
     - Linear (weight + bias)
     Each group counts as one layer for FLS/BLS.
     """
@@ -330,7 +353,7 @@ def _substitute_keys(
     keys: Sequence[str],
 ) -> Dict[str, torch.Tensor]:
     mixed = _clone_state(base_state)
-    for key in keys:
+    for key in _replaceable_keys(keys):
         if key in source_state and torch.is_tensor(source_state[key]):
             mixed[key] = source_state[key].detach().clone()
     return mixed
@@ -379,7 +402,7 @@ def _group_param_l2(
 ) -> float:
     """L2 parameter shift of a group; used only as a tie-break (not network order)."""
     total = 0.0
-    for key in group_keys:
+    for key in _replaceable_keys(group_keys):
         if key not in benign_state or key not in malicious_state:
             continue
         b = benign_state[key]
@@ -595,10 +618,10 @@ def craft_lp_state(
 ) -> Dict[str, torch.Tensor]:
     """
     Official-style craft (Eq.4). At lambda=1:
-    BC param keys <- malicious, others <- benign (local benign as base).
+    BC param keys <- malicious, others <- benign (reference benign as base).
 
-    attack_list must be state_dict keys already expanded from atomic groups
-    (e.g. selecting conv1+bn1 replaces conv1.weight and all BN tensors together).
+    attack_list must be state_dict keys already expanded from atomic groups.
+    BN running_mean/running_var always stay benign; only weight/bias are swapped.
     """
     attack_set = set(attack_list)
     lam = float(lambda_scale)
@@ -609,7 +632,12 @@ def craft_lp_state(
         if not torch.is_tensor(benign_val):
             crafted[key] = benign_val
             continue
-        if key in attack_set and key in malicious_state and torch.is_tensor(malicious_state[key]):
+        if (
+            key in attack_set
+            and key in malicious_state
+            and torch.is_tensor(malicious_state[key])
+            and not _is_bn_stat_key(key)
+        ):
             if key in global_state and torch.is_tensor(global_state[key]):
                 g = global_state[key]
                 crafted[key] = (
@@ -675,12 +703,11 @@ class LPAttack:
         patch_location: str = "bottom_right",
         seed: Optional[int] = None,
         tau: float = 0.95,
-        val_ratio: float = 0.25,
+        val_ratio: float = 0.2,
         lambda_scale: float = 1.0,
-        ref_benign_acc_threshold: float = 0.93,
-        ref_benign_max_epochs: int = 32,
-        ref_benign_eval_every: int = 4,
-        ref_malicious_epochs: int = 1,
+        ref_benign_acc_threshold: float = 0.80,
+        ref_malicious_asr_threshold: float = 0.90,
+        ref_malicious_max_epochs: int = 32,
         # Half-bin for N_val=125 (1/125=0.008): only exact-0 FLS deltas are plateau.
         eps: float = DEFAULT_BLS_EPS,
         log_selected_layers: bool = True,
@@ -693,6 +720,9 @@ class LPAttack:
         lsa_malicious_epoch_mult: Optional[int] = None,
         lsa_interval: Optional[int] = None,
         layer_selection_log_path: Optional[str] = None,
+        ref_benign_max_epochs: Optional[int] = None,
+        ref_benign_eval_every: Optional[int] = None,
+        ref_malicious_epochs: Optional[int] = None,
     ):
         del (
             top_k,
@@ -702,6 +732,9 @@ class LPAttack:
             lsa_malicious_epoch_mult,
             lsa_interval,
             layer_selection_log_path,
+            ref_benign_max_epochs,
+            ref_benign_eval_every,
+            ref_malicious_epochs,
         )
         self._badnets = BadNetsAttack(
             target_label=target_label,
@@ -718,9 +751,8 @@ class LPAttack:
         self.val_ratio = float(val_ratio)
         self.lambda_scale = float(lambda_scale)
         self.ref_benign_acc_threshold = float(ref_benign_acc_threshold)
-        self.ref_benign_max_epochs = int(ref_benign_max_epochs)
-        self.ref_benign_eval_every = max(1, int(ref_benign_eval_every))
-        self.ref_malicious_epochs = max(1, int(ref_malicious_epochs))
+        self.ref_malicious_asr_threshold = float(ref_malicious_asr_threshold)
+        self.ref_malicious_max_epochs = max(1, int(ref_malicious_max_epochs))
         self.eps = float(eps)
         self.log_selected_layers = log_selected_layers
         self.layer_score_dir = layer_score_dir
@@ -741,6 +773,16 @@ class LPAttack:
         round_idx: Optional[int] = None,
         **kwargs,
     ) -> Dataset:
+        # Fix poison subset by (global seed, client, split, mode); exclude round
+        # so the same client keeps a stable poison mask across rounds.
+        if "seed" not in kwargs and self.seed is not None:
+            kwargs["seed"] = derive_lp_seed(
+                int(self.seed),
+                client_id if client_id is not None else "",
+                split or "",
+                mode,
+                "poison",
+            )
         return self._badnets.poison_dataset(
             dataset,
             mode=mode,
@@ -816,6 +858,7 @@ class LPAttack:
         round_idx: Optional[int] = None,
         ref_benign_acc: Optional[float] = None,
         ref_benign_epochs: Optional[int] = None,
+        ref_malicious_asr: Optional[float] = None,
         ref_malicious_epochs: Optional[int] = None,
     ) -> Tuple[List[str], Dict[str, Any]]:
         """FLS + warm-start greedy BLS(tau) on atomic groups; cache expanded keys for craft."""
@@ -862,6 +905,7 @@ class LPAttack:
             final_bsr=final_bsr,
             ref_benign_acc=ref_benign_acc,
             ref_benign_epochs=ref_benign_epochs,
+            ref_malicious_asr=ref_malicious_asr,
             ref_malicious_epochs=ref_malicious_epochs,
             num_atomic_groups=len(groups),
             selected_param_keys=expanded_keys,
@@ -892,7 +936,7 @@ class LPAttack:
             raise ValueError("LPAttack.poison_upload requires client_id")
 
         cid = str(client_id)
-        # benign_state here is the local benign model used as craft base.
+        # benign_state is the local benign model used as craft base.
         benign_state = self.pop_benign_state(cid)
         malicious_state = self.pop_malicious_state(cid)
 

@@ -56,8 +56,9 @@ class BadNetsAttack:
         trigger = PatchTrigger(patch_size=self.patch_size, patch_value=self.patch_value,
                                location=self.patch_location)
         return_original_label = bool(kwargs.get("return_original_label", False))
+        seed = kwargs["seed"] if "seed" in kwargs else self.seed
         return PoisonedDatasetWrapper(
             original_dataset=dataset, trigger_transform=trigger,
             target_label=self.target_label, poison_ratio=self.poison_ratio,
-            mode=mode, seed=self.seed, return_original_label=return_original_label,
+            mode=mode, seed=seed, return_original_label=return_original_label,
         )

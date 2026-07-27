@@ -3,7 +3,7 @@
 """
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from core.config import AttackStrategyConfig
 from core.utils.registry import ATTACK_REGISTRY
@@ -99,22 +99,29 @@ _DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "patch_value": 1.0,
         "patch_location": "bottom_right",
         "tau": 0.95,
-        "val_ratio": 0.25,
+        "val_ratio": 0.2,
         "lambda_scale": 1.0,
-        "ref_benign_acc_threshold": 0.93,
-        "ref_benign_max_epochs": 32,
-        "ref_benign_eval_every": 4,
-        "ref_malicious_epochs": 1,
+        "ref_benign_acc_threshold": 0.80,
+        "ref_malicious_asr_threshold": 0.90,
+        "ref_malicious_max_epochs": 32,
         # Half-bin for N_val=125 (resolution 0.008): exact-0 deltas are plateau.
-        "eps": 0.004,
+        "eps": 0.005,
         "log_selected_layers": True,
         "layer_score_dir": None,
     },
 }
 
 
-def build_attack(strategy: AttackStrategyConfig):
-    """根据策略配置实例化攻击对象。"""
+def build_attack(
+    strategy: AttackStrategyConfig,
+    seed: Optional[int] = None,
+):
+    """根据策略配置实例化攻击对象。
+
+    seed: 全局实验种子. 仅当 strategy.params 未显式提供 seed 时写入.
+    """
     defaults = _DEFAULT_PARAMS.get(strategy.name, {})
     params = {**defaults, **strategy.params}
+    if seed is not None:
+        params.setdefault("seed", int(seed))
     return ATTACK_REGISTRY.build(strategy.name, **params)

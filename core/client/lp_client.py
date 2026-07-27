@@ -1,12 +1,14 @@
 """
-LP malicious client aligned with method_1-style LP flow.
+LP malicious client.
 
 Each selected round:
-1) Reference long-train from Wg: benign until clean train acc >= threshold
-   (eval every N epochs, max M), then malicious for 1 epoch; FLS + warm-start
-   greedy BLS on that pair.
-2) Separate local_ep benign/malicious pair from Wg for upload craft.
-3) Craft upload: put local-malicious BC layers onto the local benign model.
+1) Reference long-train from Wg on the train split only (excludes held-out val):
+   benign until clean train acc >= ref_benign_acc_threshold (eval every epoch),
+   then malicious until ASR >= ref_malicious_asr_threshold (eval every epoch on
+   held-out poison val); FLS + warm-start greedy BLS (BSR on held-out val).
+2) Local benign train from Wg for local_ep on ALL local clean data.
+3) Local malicious train from Wg for local_ep on ALL local poison data.
+4) Craft upload: put local-malicious BC layers onto the local benign model.
 """
 from __future__ import annotations
 
@@ -27,7 +29,7 @@ from data.task import TaskSet
 
 
 class LPClient(MaliciousClient):
-    """MaliciousClient with reference long-train selection + local craft pair."""
+    """MaliciousClient with reference selection + local benign/mal craft."""
 
     def __init__(
         self,
@@ -41,11 +43,12 @@ class LPClient(MaliciousClient):
         attack_profile: Optional[Any] = None,
         round_idx: Optional[int] = None,
     ):
+        # Reference: train-split loaders. Craft: full local clean / poison data.
         self.clean_train_loader: Optional[DataLoader] = None
-        self.clean_val_loader: Optional[DataLoader] = None
+        self.clean_full_loader: Optional[DataLoader] = None
         self.poison_train_loader: Optional[DataLoader] = None
+        self.poison_full_loader: Optional[DataLoader] = None
         self.poison_val_loader: Optional[DataLoader] = None
-        self._layer_selection_record: Optional[Dict[str, Any]] = None
         super().__init__(
             client_id=client_id,
             task_set=task_set,
@@ -65,10 +68,15 @@ class LPClient(MaliciousClient):
         return getattr(self.attack_profile, name, default)
 
     def _val_ratio(self) -> float:
-        return float(self._attr("val_ratio", 0.25))
+        return float(self._attr("val_ratio", 0.2))
 
     def _setup_lp_loaders(self) -> None:
-        """Split local train into train/val; build clean + poison loaders."""
+        """
+        Split local data into train / val.
+        - Reference benign + reference malicious: train split only.
+        - FLS/BLS BSR and ref malicious ASR: held-out val.
+        - Local craft benign / malicious: full local data (train + val).
+        """
         clean_store = BaseClient._build_dataset(self, SPLIT_TRAIN)
         if clean_store is None:
             raise RuntimeError(f"Client {self.owner_id} has no clean training data.")
@@ -84,9 +92,20 @@ class LPClient(MaliciousClient):
         if not 0.0 < val_ratio < 1.0:
             raise ValueError(f"val_ratio must be in (0, 1), got {val_ratio}")
 
-        rng = np.random.default_rng(
-            None if self.attack_profile is None else getattr(self.attack_profile, "seed", None)
+        base_seed = (
+            None
+            if self.attack_profile is None
+            else getattr(self.attack_profile, "seed", None)
         )
+        if base_seed is None:
+            rng = np.random.default_rng(None)
+        else:
+            from core.attack.upload.lp import derive_lp_seed
+
+            # Stable across rounds: same client -> same train/val split.
+            rng = np.random.default_rng(
+                derive_lp_seed(int(base_seed), self.owner_id, "lp_split")
+            )
         perm = rng.permutation(n)
         n_val = max(1, int(n * val_ratio))
         n_val = min(n_val, n - 1)
@@ -101,6 +120,13 @@ class LPClient(MaliciousClient):
 
         poison_train_ds = self.attack_profile.poison_dataset(
             clean_train_ds,
+            mode="train",
+            split=SPLIT_TRAIN,
+            client_id=self.owner_id,
+            round_idx=self.round_idx,
+        )
+        poison_full_ds = self.attack_profile.poison_dataset(
+            full_ds,
             mode="train",
             split=SPLIT_TRAIN,
             client_id=self.owner_id,
@@ -124,16 +150,17 @@ class LPClient(MaliciousClient):
         self.clean_train_loader = DataLoader(
             clean_train_ds, shuffle=True, **loader_kwargs
         )
-        self.clean_val_loader = DataLoader(
-            clean_val_ds, shuffle=False, **loader_kwargs
-        )
+        self.clean_full_loader = DataLoader(full_ds, shuffle=True, **loader_kwargs)
         self.poison_train_loader = DataLoader(
             poison_train_ds, shuffle=True, **loader_kwargs
+        )
+        self.poison_full_loader = DataLoader(
+            poison_full_ds, shuffle=True, **loader_kwargs
         )
         self.poison_val_loader = DataLoader(
             poison_val_ds, shuffle=False, **loader_kwargs
         )
-        self.train_loader = self.poison_train_loader
+        self.train_loader = self.poison_full_loader
 
     def _train_one_model(
         self,
@@ -220,50 +247,56 @@ class LPClient(MaliciousClient):
     ) -> Dict[str, Any]:
         """
         Serial reference long-train from Wg for FLS / warm-start greedy BLS:
-        benign until clean-train acc >= threshold (checked every eval_every epochs,
-        max max_epochs), then malicious for ref_malicious_epochs.
+        benign on clean train split until acc >= threshold (eval every epoch);
+        then malicious on poison train until ASR >= threshold (eval every epoch
+        on held-out poison val). Does not cache craft base (local benign does).
         """
         assert self.attack_profile is not None
         assert self.clean_train_loader is not None
         assert self.poison_train_loader is not None
         assert self.poison_val_loader is not None
 
-        from core.attack.upload.lp import compute_accuracy
+        from core.attack.upload.lp import compute_accuracy, compute_bsr
 
-        threshold = float(self._attr("ref_benign_acc_threshold", 0.93))
-        max_epochs = int(self._attr("ref_benign_max_epochs", 32))
-        eval_every = max(1, int(self._attr("ref_benign_eval_every", 4)))
-        mal_epochs = max(1, int(self._attr("ref_malicious_epochs", 1)))
+        acc_threshold = float(self._attr("ref_benign_acc_threshold", 0.80))
+        asr_threshold = float(self._attr("ref_malicious_asr_threshold", 0.90))
+        mal_max_epochs = max(1, int(self._attr("ref_malicious_max_epochs", 32)))
+        # Hard safety if clean acc never reaches the switch threshold.
+        benign_max_epochs = 64
 
         self.model.load_state_dict(initial_state, strict=False)
-        benign_acc = compute_accuracy(
+        acc = compute_accuracy(
             self.model, self.clean_train_loader, self.device
         )
-        benign_epochs = 0
+        num_time = 0
 
-        # Each call of _train_one_model(..., num_epochs=1) = 1 full DataLoader pass.
-        while benign_acc < threshold and benign_epochs < max_epochs:
+        while acc < acc_threshold and num_time < benign_max_epochs:
             self._train_one_model(
                 self.model,
                 self.clean_train_loader,
                 num_epochs=1,
                 apply_hooks=False,
             )
-            benign_epochs += 1
-            if benign_epochs % eval_every == 0:
-                benign_acc = compute_accuracy(
-                    self.model, self.clean_train_loader, self.device
-                )
+            num_time += 1
+            acc = compute_accuracy(
+                self.model, self.clean_train_loader, self.device
+            )
 
         ref_benign_state = self._clone_state(self.model)
 
         # Malicious continues from the converged benign checkpoint.
-        self._train_one_model(
-            self.model,
-            self.poison_train_loader,
-            num_epochs=mal_epochs,
-            apply_hooks=False,
-        )
+        asr = compute_bsr(self.model, self.poison_val_loader, self.device)
+        mal_epochs = 0
+        while asr < asr_threshold and mal_epochs < mal_max_epochs:
+            self._train_one_model(
+                self.model,
+                self.poison_train_loader,
+                num_epochs=1,
+                apply_hooks=False,
+            )
+            mal_epochs += 1
+            asr = compute_bsr(self.model, self.poison_val_loader, self.device)
+
         ref_malicious_state = self._clone_state(self.model)
 
         _, record = self.attack_profile.identify_bc_layers(
@@ -274,8 +307,9 @@ class LPClient(MaliciousClient):
             val_loader=self.poison_val_loader,
             device=self.device,
             round_idx=self.round_idx,
-            ref_benign_acc=benign_acc,
-            ref_benign_epochs=benign_epochs,
+            ref_benign_acc=acc,
+            ref_benign_epochs=num_time,
+            ref_malicious_asr=asr,
             ref_malicious_epochs=mal_epochs,
         )
         return record
@@ -283,8 +317,12 @@ class LPClient(MaliciousClient):
     def train(self) -> Dict[str, Any]:
         if self.clean_train_loader is None or self.poison_train_loader is None:
             raise RuntimeError("LPClient loaders are not initialized")
-        if self.clean_val_loader is None or self.poison_val_loader is None:
-            raise RuntimeError("LPClient val loaders are not initialized")
+        if self.clean_full_loader is None:
+            raise RuntimeError("LPClient clean_full_loader is not initialized")
+        if self.poison_full_loader is None:
+            raise RuntimeError("LPClient poison_full_loader is not initialized")
+        if self.poison_val_loader is None:
+            raise RuntimeError("LPClient poison_val_loader is not initialized")
         if self.attack_profile is None:
             raise RuntimeError("LPClient requires attack_profile")
         for required in (
@@ -299,24 +337,25 @@ class LPClient(MaliciousClient):
         self._last_initial_state = initial_state
         local_epochs = int(self.config.trainer_config.epochs)
 
-        # 1) Reference long-train pair -> FLS + warm-start greedy BLS select BC groups.
-        self._layer_selection_record = self._run_reference_train(initial_state)
+        # 1) Reference long-train on train split -> BC groups.
+        self._run_reference_train(initial_state)
 
-        # 2) Local benign / malicious pair from the same Wg for craft.
+        # 2) Local benign from Wg on full local clean data (craft base).
         self.model.load_state_dict(initial_state, strict=False)
         self._train_one_model(
             self.model,
-            self.clean_train_loader,
+            self.clean_full_loader,
             num_epochs=local_epochs,
             apply_hooks=False,
         )
         benign_state = self._clone_state(self.model)
         self.attack_profile.cache_benign_state(self.owner_id, benign_state)
 
+        # 3) Local malicious from Wg on full local poison data.
         self.model.load_state_dict(initial_state, strict=False)
         avg_loss = self._train_one_model(
             self.model,
-            self.poison_train_loader,
+            self.poison_full_loader,
             num_epochs=local_epochs,
             apply_hooks=True,
         )
@@ -344,8 +383,8 @@ class LPClient(MaliciousClient):
             initial_weights=self._last_initial_state,
             client_id=self.owner_id,
             round_idx=self.round_idx,
-            num_samples=len(self.poison_train_loader.dataset)
-            if self.poison_train_loader is not None
+            num_samples=len(self.poison_full_loader.dataset)
+            if self.poison_full_loader is not None
             else 0,
         )
 
@@ -355,6 +394,4 @@ class LPClient(MaliciousClient):
             "metrics": train_metrics["train_loss"],
             "num_samples": 1,
         }
-        if self._layer_selection_record is not None:
-            payload["layer_selection"] = self._layer_selection_record
         return payload

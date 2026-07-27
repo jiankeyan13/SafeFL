@@ -8,7 +8,6 @@ import torch
 from torch.utils.data import DataLoader, Subset
 
 from core.attack import build_attack
-from core.attack.upload.lp import append_layer_selection_jsonl, save_layer_score_record
 from core.client.malicious_client import MaliciousClient
 from core.simulation.base_runner import BaseRunner
 from core.config import AttackStrategyConfig, ClientConfig, apply_malicious_epochs_override
@@ -41,7 +40,7 @@ class Runner(BaseRunner):
 
         # 默认取第一个攻击策略进行 ASR 评估 (通常实验只开启一种攻击)
         strategy = self.attack_config.strategies[0]
-        attack_profile = build_attack(strategy)
+        attack_profile = build_attack(strategy, seed=self.seed)
 
         # 获取全局干净测试集
         test_task = self.task_set.get_task(OWNER_SERVER, SPLIT_TEST_GLOBAL)
@@ -79,7 +78,7 @@ class Runner(BaseRunner):
             count = int(num_malicious * strategy.fraction)
             end_idx = min(start_idx + count, len(malicious_list))
 
-            attack_profile = build_attack(strategy)
+            attack_profile = build_attack(strategy, seed=self.seed)
             if strategy.name == "pgd" and getattr(attack_profile, "dataset", None) is None:
                 attack_profile.dataset = self.data_config.dataset
             for cid in malicious_list[start_idx:end_idx]:
@@ -110,42 +109,6 @@ class Runner(BaseRunner):
             if hasattr(attack_profile, "layer_score_dir"):
                 attack_profile.layer_score_dir = self._lp_layer_score_dir
 
-    def _record_lp_layer_selections(
-        self,
-        updates: List[Dict[str, Any]],
-        round_idx: int,
-    ) -> None:
-        if not self._lp_layer_score_dir:
-            return
-
-        records: List[Dict[str, Any]] = []
-        for update in updates:
-            record = update.get("layer_selection")
-            if isinstance(record, dict):
-                records.append(record)
-
-        if not records:
-            return
-
-        for record in records:
-            path = save_layer_score_record(self._lp_layer_score_dir, record)
-            jsonl_path = record.get("selections_jsonl")
-            if not jsonl_path:
-                jsonl_path = append_layer_selection_jsonl(self._lp_layer_score_dir, record)
-            record["score_file"] = path
-            record["selections_jsonl"] = jsonl_path
-
-        avg_num = sum(int(r.get("num_selected", 0)) for r in records) / len(records)
-        avg_bsr = sum(float(r.get("bsr_malicious", 0.0)) for r in records) / len(records)
-        self.logger.log_metrics(
-            {
-                "attack/lp_num_selections": float(len(records)),
-                "attack/lp_avg_num_bc_layers": float(avg_num),
-                "attack/lp_avg_bsr_malicious": float(avg_bsr),
-            },
-            step=round_idx,
-        )
-
     def _build_client_job_specs(
         self,
         selected_ids: List[str],
@@ -163,6 +126,7 @@ class Runner(BaseRunner):
             if strategy is None:
                 continue
             params = dict(strategy.params)
+            params.setdefault("seed", self.seed)
             if strategy.name == "pgd":
                 params.setdefault("dataset", self.data_config.dataset)
             # 将 driver 上已解析的绝对 delta_log_dir 传给 Ray worker
@@ -289,7 +253,6 @@ class Runner(BaseRunner):
                 selected_ids = self._select_clients(round_idx)
                 server_payloads = self.server.broadcast(selected_ids)
                 updates, round_lr = self._run_local_training(selected_ids, server_payloads, round_idx)
-                self._record_lp_layer_selections(updates, round_idx)
                 self.server.step(updates, proxy_loader=self.proxy_loader, client_lr=round_lr)
 
                 train_metrics = self._aggregate_train_metrics(updates)
