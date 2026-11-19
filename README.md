@@ -7,7 +7,7 @@
 ```text
 SafeFL/
 ├── main.py                      # Hydra 实验入口
-├── configs/                     # Hydra 分组配置 (algorithm / attack / dataset / model / ...)
+├── configs/                     # Hydra 分组配置 (defense / attack / dataset / model / ...)
 ├── data/                        # 零拷贝 CHW uint8 向量化数据层 (DataHub / DataView / FastBatchLoader)
 ├── models/                      # 模型注册 (ResNet18 / ResNet34 / FashionMNISTCNN)
 └── core/
@@ -25,11 +25,11 @@ SafeFL/
 python main.py
 
 # 本地单进程模式（支持 IDE 直接打断点单步调试）
-python main.py parallel.backend=local training.rounds=5 algorithm=fltrust data.enable_proxy=true attack=badnets logging=local
+python main.py parallel.backend=local training.rounds=5 defense=fltrust data.enable_proxy=true attack=badnets logging=local
 
 # 运行预设实验或 Hydra 多实验扫描
 python main.py experiment=batman_fltrust
-python main.py -m algorithm=fedavg,flame,alignins attack=badnets,neurotoxin,lga seed=42
+python main.py -m defense=fedavg,flame,alignins attack=badnets,neurotoxin,lga seed=42
 ```
 
 ## 5 分钟新增算法指南（1 算法 = 1 文件）

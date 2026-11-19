@@ -44,19 +44,6 @@ class MARSDefense(BaseDefense):
         self.seed = int(seed)
         self.multiply_std = bool(multiply_std)
 
-    @staticmethod
-    def _conv_bn_pairs(model: nn.Module) -> List[Tuple[str, str]]:
-        pairs: List[Tuple[str, str]] = []
-        pending: Tuple[str, nn.Conv2d] | None = None
-        for name, mod in model.named_modules():
-            if isinstance(mod, nn.Conv2d):
-                pending = (name, mod)
-            elif isinstance(mod, nn.BatchNorm2d):
-                if pending is not None and pending[1].out_channels == mod.num_features:
-                    pairs.append((pending[0], name))
-                pending = None
-        return pairs
-
     def _channel_scale(self, bn_weight: torch.Tensor, running_var: torch.Tensor) -> torch.Tensor:
         var = torch.nan_to_num(running_var.detach().float(), nan=0.0).clamp(min=self.var_clamp_min)
         gamma = torch.nan_to_num(bn_weight.detach().float(), nan=0.0).abs()
@@ -115,7 +102,7 @@ class MARSDefense(BaseDefense):
         ctx: ServerContext,
     ) -> DefenseOutput:
         n = len(updates)
-        pairs = self._conv_bn_pairs(global_model)
+        pairs = F.find_conv_bn_pairs(global_model)
         if n < max(2, self.n_clusters) or not pairs:
             param_delta, buffers = F.aggregate_updates(updates, device=ctx.device)
             return DefenseOutput(param_delta=param_delta, buffers=buffers)

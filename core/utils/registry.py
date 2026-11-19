@@ -1,7 +1,13 @@
 """Generic component registry and built-in bootstrapper for SafeFL v2."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Type
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type
+
+if TYPE_CHECKING:
+    import torch.nn as nn
+
+    from core.utils.config import ComponentConfig
+    from data.spec import FederatedDataSpec
 
 
 class Registry:
@@ -63,3 +69,16 @@ def bootstrap_registries() -> None:
     import models  # noqa: F401
 
     _BOOTSTRAPPED = True
+
+
+def build_model(
+    model_cfg: "ComponentConfig",
+    data_spec: Optional["FederatedDataSpec"] = None,
+) -> "nn.Module":
+    """Instantiate a registered model, auto-injecting ``num_classes`` & ``input_channels`` from ``data_spec``."""
+    params: Dict[str, Any] = {}
+    if data_spec is not None:
+        params["num_classes"] = int(data_spec.dataset.num_classes)
+        params["input_channels"] = int(data_spec.dataset.train.channels)
+    params.update(model_cfg.params)
+    return MODEL_REGISTRY.build(model_cfg.name, **params)

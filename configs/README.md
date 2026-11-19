@@ -10,7 +10,7 @@ configs/
   dataset/
   partitioner/
   model/
-  algorithm/
+  defense/
   attack/
   training/
   logging/
@@ -21,15 +21,15 @@ configs/
 
 ```bash
 python main.py
-python main.py algorithm=fltrust
-python main.py experiment=vanilla_fltrust_badnets
-python main.py training.rounds=10 client.lr=0.001
+python main.py defense=fltrust data.enable_proxy=true
+python main.py experiment=batman_fltrust
+python main.py training.rounds=10 training.eval_interval=5 client.lr=0.001
 ```
 
 ## 多实验
 
 ```bash
-python main.py -m algorithm=fedavg,fltrust,flame seed=1,2,3
+python main.py -m defense=fedavg,fltrust,flame seed=1,2,3
 ```
 
 Hydra 负责 YAML 加载、配置组合、命令行覆盖和 sweep。SafeFL 内部配置结构位于 `core/utils/config.py`。

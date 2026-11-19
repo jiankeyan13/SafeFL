@@ -31,8 +31,8 @@ Worker: DataHub.from_spec(spec, device) ────────┘
 | `spec.py` | `FederatedDataSpec`, `DatasetPairSpec`, `SplitSpec`, `PartitionMap`, `AugmentSpec` | 可序列化的纯元数据/索引描述，保证 Ray 传输零图像开销。 |
 | `source.py` | `ensure_chw_mmap_cache`, `SharedDataSource` | 原子生成与校验 `CHW uint8` 缓存；提供只读 mmap 与可选 VRAM 预加载。 |
 | `loader.py` | `DataView`, `FastBatchLoader`, `BatchPoisoner`, `apply_batch_augment` | 零拷贝索引切片（`subset` / `split` / `loader`）、无 worker 向量化迭代器与投毒协议。 |
-| `partition.py` | `Partitioner`, `PARTITIONER_REGISTRY`, `create_partition_map` | 纯索引划分器注册表、客户端数据划分及服务端类别均衡 Proxy 集抽取。 |
-| `registry.py` | `DATASET_REGISTRY` | 数据集构建函数注册表。 |
+| `partition.py` | `Partitioner`, `create_partition_map` | 纯索引客户端数据划分器及服务端类别均衡 Proxy 集抽取。 |
+| `registry.py` | `DataRegistry`, `DATASET_REGISTRY`, `PARTITIONER_REGISTRY` | 数据层统一注册表（数据集构建函数与划分器注册）。 |
 | `datasets/` | `cifar10`, `cifar100`, `fashionmnist`, `tiny_imagenet` | 内置数据集注册与默认增强/归一化参数。 |
 
 ## 内置数据集与划分器

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 import numpy as np
 
+from data.registry import PARTITIONER_REGISTRY
 from data.spec import PartitionMap
 
 if TYPE_CHECKING:
@@ -18,35 +19,6 @@ class Partitioner(ABC):
     @abstractmethod
     def partition(self, targets: np.ndarray, num_clients: int) -> Dict[int, np.ndarray]:
         """Return ``{client_id: int32_indices}`` for ``client_id in 0..num_clients-1``."""
-
-
-class PartitionerRegistry:
-    """Registry for data partitioners."""
-
-    def __init__(self) -> None:
-        self._classes: Dict[str, type[Partitioner]] = {}
-
-    def register(self, name: str) -> Callable[[type[Partitioner]], type[Partitioner]]:
-        key = name.strip().lower()
-
-        def decorator(cls: type[Partitioner]) -> type[Partitioner]:
-            if key in self._classes:
-                raise ValueError(f"Partitioner '{key}' is already registered.")
-            self._classes[key] = cls
-            return cls
-
-        return decorator
-
-    def build(self, name: str, **kwargs: Any) -> Partitioner:
-        key = name.strip().lower()
-        if key not in self._classes:
-            raise ValueError(
-                f"Unknown partitioner '{name}'. Supported: {sorted(self._classes.keys())}"
-            )
-        return self._classes[key](**kwargs)
-
-
-PARTITIONER_REGISTRY = PartitionerRegistry()
 
 
 @PARTITIONER_REGISTRY.register("iid")

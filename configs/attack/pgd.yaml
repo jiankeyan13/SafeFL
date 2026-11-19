@@ -11,5 +11,4 @@ strategies:
       patch_size: 5
       patch_value: 1.0
       patch_location: bottom_right
-      cifar10_epsilon_scale: 0.1
-      default_epsilon_scale: 1.0
+      epsilon_scale: 0.1

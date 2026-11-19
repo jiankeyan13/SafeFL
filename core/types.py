@@ -325,6 +325,9 @@ class ServerContext:
     client_lr: float
     device: torch.device
     train_cfg: TrainConfig
+    seed: int = 42
+    num_classes: int = 10
+    input_shape: Tuple[int, int, int] = (3, 32, 32)
     proxy_data: Optional["DataView"] = None
     run_dir: Optional[str] = None
 

@@ -17,7 +17,7 @@ from core.utils.config import GlobalConfig
 from core.utils.evaluator import evaluate_backdoor, evaluate_clean
 from core.utils.logger import Logger
 from core.utils.lr_schedule import get_lr_from_schedule
-from core.utils.registry import MODEL_REGISTRY, bootstrap_registries
+from core.utils.registry import bootstrap_registries, build_model
 from core.utils.trainer import build_criterion
 from data.hub import DataHub
 
@@ -57,10 +57,7 @@ class Runner:
         )
 
         # 2. Server + Defense
-        global_model = MODEL_REGISTRY.build(
-            self.config.model.name,
-            **self.config.model.params,
-        )
+        global_model = build_model(self.config.model, self.hub.spec)
         defense = build_defense(self.config.defense, seed=self.seed)
         self.server = Server(
             model=global_model,
@@ -165,11 +162,15 @@ class Runner:
                 updates = self.coordinator.finalize_round(round_idx, raw_results)
 
                 # Step 5: Server defense & global model update
+                train_spec = self.hub.spec.dataset.train
                 server_ctx = ServerContext(
                     round_idx=round_idx,
                     client_lr=round_lr,
                     device=self.device,
                     train_cfg=round_train_cfg,
+                    seed=self.seed,
+                    num_classes=self.hub.num_classes,
+                    input_shape=(train_spec.channels, *train_spec.image_size),
                     proxy_data=self.hub.proxy(),
                     run_dir=self.logger.run_dir,
                 )
@@ -181,7 +182,14 @@ class Runner:
                 round_metrics.update(defense_metrics)
                 self.logger.log_metrics(round_metrics, step=round_idx)
 
-                self._run_global_eval(round_idx)
+                eval_every = self.config.training.eval_interval
+                if (
+                    eval_every <= 1
+                    or round_idx == 0
+                    or (round_idx + 1) % eval_every == 0
+                    or round_idx == total_rounds - 1
+                ):
+                    self._run_global_eval(round_idx)
 
             self.logger.info("Training Finished.")
         finally:

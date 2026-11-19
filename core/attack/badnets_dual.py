@@ -31,7 +31,7 @@ class BadNetsDualAttack(BaseAttacker):
         self,
         delta_log_interval: int = 10,
         delta_log_dir: Optional[str] = None,
-        delta_log_enabled: bool = True,
+        delta_log_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)

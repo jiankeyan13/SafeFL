@@ -6,7 +6,6 @@ import logging
 import math
 import os
 import random
-import threading
 from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -18,7 +17,6 @@ from core.utils.registry import ATTACK_REGISTRY
 from core.utils.trainer import train_model
 from data.loader import derive_stable_seed
 
-_LAYER_LOG_LOCK = threading.Lock()
 _logger = logging.getLogger(__name__)
 
 LayerScore = Tuple[float, str]
@@ -227,7 +225,7 @@ class BatmanAttack(BaseAttacker):
         selected_layer_ratio: Optional[float] = None,
         layer_selection: str = "global_deviation",
         layer_selection_seed: Optional[int] = None,
-        log_selected_layers: bool = True,
+        log_selected_layers: bool = False,
         layer_selection_log_path: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
@@ -261,7 +259,8 @@ class BatmanAttack(BaseAttacker):
         if self.layer_selection_log_path:
             path = self.layer_selection_log_path
         elif ctx.run_dir:
-            path = os.path.join(ctx.run_dir, f"batman_selected_layers_{self.layer_selection}.jsonl")
+            out_dir = os.path.join(ctx.run_dir, "batman_selected_layers")
+            path = os.path.join(out_dir, f"{self.layer_selection}_client_{ctx.client_id}.jsonl")
         else:
             return
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -273,9 +272,8 @@ class BatmanAttack(BaseAttacker):
             "selected_layers": list(selected),
             "ranked_layers": [{"name": n, "score": s} for s, n in ranked],
         }
-        with _LAYER_LOG_LOCK:
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def step(self, ctx: ClientContext) -> ClientUpdate:
         # 1. Clean trajectory: Wg -> Wc

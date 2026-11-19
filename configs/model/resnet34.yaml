@@ -1,4 +1,2 @@
 name: resnet34
-params:
-  num_classes: 200
-  input_channels: 3
+params: {}

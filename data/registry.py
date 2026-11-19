@@ -1,44 +1,51 @@
-"""Type-safe dataset registry for v2."""
+"""Unified registry for datasets and partitioners in the v2 data layer."""
 from __future__ import annotations
 
-from typing import Callable, Dict, List
+from typing import Any, Callable, Dict, Generic, List, TypeVar
 
-from data.spec import DatasetPairSpec
-
-DatasetBuilder = Callable[[str], DatasetPairSpec]
+T = TypeVar("T")
 
 
-class DatasetRegistry:
-    """Registry mapping canonical dataset names (e.g. 'cifar10') to builders."""
+class DataRegistry(Generic[T]):
+    """Case-insensitive registry mapping canonical names to builders or classes."""
 
-    def __init__(self) -> None:
-        self._builders: Dict[str, DatasetBuilder] = {}
+    def __init__(self, kind: str) -> None:
+        self._kind = kind
+        self._entries: Dict[str, Callable[..., T]] = {}
 
-    def register(self, name: str) -> Callable[[DatasetBuilder], DatasetBuilder]:
-        key = name.strip().lower()
+    @staticmethod
+    def _norm(name: str) -> str:
+        return name.strip().lower()
 
-        def decorator(func: DatasetBuilder) -> DatasetBuilder:
-            if key in self._builders:
-                raise ValueError(f"Dataset '{key}' is already registered.")
-            self._builders[key] = func
-            return func
+    def register(self, name: str) -> Callable[[Callable[..., T]], Callable[..., T]]:
+        key = self._norm(name)
+
+        def decorator(fn_or_cls: Callable[..., T]) -> Callable[..., T]:
+            if key in self._entries:
+                raise ValueError(f"{self._kind} '{key}' is already registered.")
+            self._entries[key] = fn_or_cls
+            return fn_or_cls
 
         return decorator
 
-    def build(self, name: str, root: str) -> DatasetPairSpec:
-        key = name.strip().lower()
-        if key not in self._builders:
+    def get(self, name: str) -> Callable[..., T]:
+        key = self._norm(name)
+        if key not in self._entries:
             raise KeyError(
-                f"Dataset '{name}' is not registered. "
+                f"Unknown {self._kind.lower()} '{name}'. "
                 f"Available: {self.available()}"
             )
-        return self._builders[key](root)
+        return self._entries[key]
+
+    def build(self, name: str, *args: Any, **kwargs: Any) -> T:
+        return self.get(name)(*args, **kwargs)
 
     def available(self) -> List[str]:
-        return sorted(self._builders.keys())
+        return sorted(self._entries.keys())
 
     def __contains__(self, name: str) -> bool:
-        return name.strip().lower() in self._builders
+        return self._norm(name) in self._entries
 
 
-DATASET_REGISTRY = DatasetRegistry()
+DATASET_REGISTRY: DataRegistry[Any] = DataRegistry("Dataset")
+PARTITIONER_REGISTRY: DataRegistry[Any] = DataRegistry("Partitioner")

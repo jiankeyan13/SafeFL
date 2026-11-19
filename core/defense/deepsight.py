@@ -39,33 +39,6 @@ class DeepSightDefense(BaseDefense):
         self._noise_cache: Dict[Tuple[Any, ...], List[torch.Tensor]] = {}
 
     @staticmethod
-    def _resolve_output_layer(param_keys: List[str]) -> Tuple[Optional[str], Optional[str]]:
-        for prefix in ("fc", "linear", "classifier"):
-            if f"{prefix}.weight" in param_keys and f"{prefix}.bias" in param_keys:
-                return f"{prefix}.weight", f"{prefix}.bias"
-        for k in reversed(param_keys):
-            if k.endswith(".weight"):
-                b_key = k[: -len("weight")] + "bias"
-                if b_key in param_keys:
-                    return k, b_key
-        return None, None
-
-    @staticmethod
-    def _infer_input_shape(model: nn.Module, num_classes: int) -> Tuple[int, int, int]:
-        if hasattr(model, "input_shape"):
-            return tuple(model.input_shape)
-        in_ch = 3
-        for mod in model.modules():
-            if isinstance(mod, nn.Conv2d):
-                in_ch = int(mod.in_channels)
-                break
-        if in_ch == 1:
-            return (1, 28, 28)
-        if num_classes >= 200:
-            return (in_ch, 64, 64)
-        return (in_ch, 32, 32)
-
-    @staticmethod
     def _dists_from_clusters(clusters: np.ndarray, n: int) -> np.ndarray:
         dists = np.ones((n, n), dtype=np.float64)
         same = (clusters[:, None] == clusters[None, :]) & (clusters[:, None] != -1)
@@ -204,12 +177,12 @@ class DeepSightDefense(BaseDefense):
         clip_value = float(np.median(norms)) if norms else 1.0
 
         param_keys = F.ordered_keys(updates[0].param_delta)
-        w_name, b_name = self._resolve_output_layer(param_keys)
+        w_name, b_name = F.resolve_classifier_keys(param_keys, global_model)
         if n < 2 or w_name is None or b_name is None:
             benign_idx = list(range(n))
         else:
             num_classes = int(updates[0].param_delta[b_name].numel())
-            in_shape = self._infer_input_shape(global_model, num_classes)
+            in_shape = tuple(getattr(global_model, "input_shape", ctx.input_shape))
 
             neups, tes = self._calc_neups_tes(updates, w_name, b_name, num_classes, ctx.device)
             med_te = float(np.median(tes)) if tes else 0.0

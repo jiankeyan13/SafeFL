@@ -12,6 +12,7 @@ from core.defense.base import BaseDefense
 from core.types import ClientUpdate, DefenseOutput, ServerContext, split_model_state
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
+from data.loader import derive_stable_seed
 
 
 @DEFENSE_REGISTRY.register("flame")
@@ -68,7 +69,12 @@ class FlameDefense(BaseDefense):
             keys,
             norms=norms,
         )
-        noisy_delta = F.add_gaussian_noise(avg_delta, std=self.noise * clip_value)
+        noise_seed = derive_stable_seed(ctx.seed, "flame_noise", ctx.round_idx)
+        noisy_delta = F.add_gaussian_noise(
+            avg_delta,
+            std=self.noise * clip_value,
+            seed=noise_seed,
+        )
         buffers = F.average_buffers(updates, benign_idx, device=ctx.device)
 
         return DefenseOutput(

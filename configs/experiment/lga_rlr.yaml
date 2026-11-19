@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - override /algorithm: rlr
+  - override /defense: rlr
   - override /attack: lga
   - override /model: resnet18
   - override /dataset: cifar10

@@ -25,20 +25,6 @@ def compute_parameter_l2_norm(model: nn.Module, state: Mapping[str, torch.Tensor
     return 0.0 if sq_norm is None else float(sq_norm.sqrt().item())
 
 
-def resolve_pgd_epsilon(
-    model: nn.Module,
-    global_params: Mapping[str, torch.Tensor],
-    *,
-    dataset_name: Optional[str] = None,
-    cifar10_epsilon_scale: float = 0.1,
-    default_epsilon_scale: float = 1.0,
-) -> float:
-    w0_norm = compute_parameter_l2_norm(model, global_params)
-    is_cifar10 = bool(dataset_name and dataset_name.strip().lower() == "cifar10")
-    scale = cifar10_epsilon_scale if is_cifar10 else default_epsilon_scale
-    return float(scale) * w0_norm
-
-
 @torch.no_grad()
 def project_model_l2_(
     model: nn.Module,
@@ -77,26 +63,21 @@ class PGDAttack(BaseAttacker):
 
     def __init__(
         self,
-        dataset: Optional[str] = None,
-        cifar10_epsilon_scale: float = 0.1,
-        default_epsilon_scale: float = 1.0,
+        epsilon_scale: float = 0.1,
+        epsilon: Optional[float] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.dataset = dataset
-        self.cifar10_epsilon_scale = float(cifar10_epsilon_scale)
-        self.default_epsilon_scale = float(default_epsilon_scale)
+        self.epsilon_scale = float(epsilon_scale)
+        self.fixed_epsilon = None if epsilon is None else float(epsilon)
 
     def step(self, ctx: ClientContext) -> ClientUpdate:
-        dataset_name = self.dataset or ctx.data.source.spec.name
-        epsilon = resolve_pgd_epsilon(
-            ctx.model,
-            ctx.initial_params,
-            dataset_name=dataset_name,
-            cifar10_epsilon_scale=self.cifar10_epsilon_scale,
-            default_epsilon_scale=self.default_epsilon_scale,
+        epsilon = (
+            self.fixed_epsilon
+            if self.fixed_epsilon is not None
+            else self.epsilon_scale * compute_parameter_l2_norm(ctx.model, ctx.initial_params)
         )
-        poison_loader = ctx.loader(poisoner=self.poisoner, seed=self.seed)
+        poison_loader = ctx.loader(poisoner=self.poisoner)
         stats = train_model(
             ctx.model,
             poison_loader,

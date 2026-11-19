@@ -5,14 +5,12 @@ from typing import Any, Iterable, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from core.attack.base import BaseAttacker
 from core.types import ClientContext, ClientUpdate
+from core.utils import functional as F
 from core.utils.registry import ATTACK_REGISTRY
 from core.utils.trainer import build_optimizer, train_model
-
-_CLASSIFIER_NAMES = ("linear", "fc", "classifier")
 
 
 class SupConLoss(nn.Module):
@@ -64,22 +62,10 @@ class SupConLoss(nn.Module):
         return loss[valid].mean()
 
 
-def resolve_classifier_name(model: nn.Module) -> str:
-    for name in _CLASSIFIER_NAMES:
-        if isinstance(getattr(model, name, None), nn.Linear):
-            return name
-    linear_names = [
-        name for name, mod in model.named_modules() if isinstance(mod, nn.Linear) and name
-    ]
-    if not linear_names:
-        raise AttributeError(f"Model {type(model).__name__} has no Linear classifier head.")
-    return linear_names[-1]
-
-
 def split_encoder_classifier_params(
     model: nn.Module,
-) -> Tuple[List[nn.Parameter], List[nn.Parameter], str]:
-    head_name = resolve_classifier_name(model)
+) -> Tuple[List[nn.Parameter], List[nn.Parameter], nn.Module]:
+    head_name, head_mod = F.find_classifier_head(model)
     prefix = f"{head_name}."
     encoder_params: List[nn.Parameter] = []
     classifier_params: List[nn.Parameter] = []
@@ -92,24 +78,7 @@ def split_encoder_classifier_params(
             encoder_params.append(param)
     if not encoder_params or not classifier_params:
         raise RuntimeError("Chameleon requires non-empty encoder and classifier parameters.")
-    return encoder_params, classifier_params, head_name
-
-
-def extract_features(model: nn.Module, inputs: torch.Tensor, head_name: str) -> torch.Tensor:
-    parts = head_name.split(".")
-    parent: nn.Module = model
-    for part in parts[:-1]:
-        parent = getattr(parent, part)
-    leaf = parts[-1]
-    head = getattr(parent, leaf)
-    setattr(parent, leaf, nn.Identity())
-    try:
-        feats = model(inputs)
-    finally:
-        setattr(parent, leaf, head)
-    if feats.ndim != 2:
-        feats = feats.reshape(feats.shape[0], -1)
-    return F.normalize(feats, dim=1)
+    return encoder_params, classifier_params, head_mod
 
 
 def _set_requires_grad(params: Iterable[nn.Parameter], flag: bool) -> None:
@@ -147,8 +116,8 @@ class ChameleonAttack(BaseAttacker):
         self.supcon_loss = SupConLoss(temperature=self.temperature, base_temperature=self.temperature)
 
     def step(self, ctx: ClientContext) -> ClientUpdate:
-        encoder_params, classifier_params, head_name = split_encoder_classifier_params(ctx.model)
-        poison_loader = ctx.loader(poisoner=self.poisoner, seed=self.seed)
+        encoder_params, classifier_params, head_mod = split_encoder_classifier_params(ctx.model)
+        poison_loader = ctx.loader(poisoner=self.poisoner)
         proj_epochs = (
             self.projection_epochs if self.projection_epochs is not None else ctx.epochs
         )
@@ -170,7 +139,7 @@ class ChameleonAttack(BaseAttacker):
                         if bx.size(0) < 2:
                             continue
                         opt.zero_grad(set_to_none=True)
-                        feats = extract_features(ctx.model, bx, head_name)
+                        feats = F.extract_penultimate_features(ctx.model, bx, head_mod)
                         loss_val = self.supcon_loss(
                             feats,
                             by,

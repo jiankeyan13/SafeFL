@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 import os
-import threading
 from typing import Any, Dict, List, Mapping, Optional
 
 import torch
@@ -13,8 +12,6 @@ from core.attack.base import BaseAttacker
 from core.types import ClientContext, ClientUpdate
 from core.utils.registry import ATTACK_REGISTRY
 from core.utils.trainer import build_criterion, train_model
-
-_CSV_LOCK = threading.Lock()
 
 
 def compute_clean_batch_gradients(
@@ -84,11 +81,13 @@ def build_neurotoxin_masks(
     return masks
 
 
-def _append_mask_csv(
-    run_dir: str,
-    round_idx: int,
-    client_id: int,
+def _summarize_and_dump_masks(
     masks: Mapping[str, torch.Tensor],
+    *,
+    run_dir: Optional[str] = None,
+    round_idx: int = 0,
+    client_id: int = 0,
+    dump_csv: bool = False,
 ) -> Dict[str, float]:
     layers: List[Dict[str, Any]] = []
     n_total = 0
@@ -96,31 +95,32 @@ def _append_mask_csv(
     for name, mask in masks.items():
         total = int(mask.numel())
         blocked = int((mask == 0).sum().item())
-        layers.append(
-            {
-                "round": round_idx,
-                "client_id": client_id,
-                "layer": name,
-                "n_total": total,
-                "n_masked": blocked,
-                "ratio": f"{(blocked / total if total > 0 else 0.0):.6f}",
-            }
-        )
         n_total += total
         n_masked += blocked
+        if dump_csv:
+            layers.append(
+                {
+                    "round": round_idx,
+                    "client_id": client_id,
+                    "layer": name,
+                    "n_total": total,
+                    "n_masked": blocked,
+                    "ratio": f"{(blocked / total if total > 0 else 0.0):.6f}",
+                }
+            )
 
-    if layers:
-        csv_path = os.path.join(run_dir, "neurotoxin_layer_masks.csv")
-        os.makedirs(run_dir, exist_ok=True)
-        with _CSV_LOCK:
-            write_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
-            with open(csv_path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(
-                    f, fieldnames=["round", "client_id", "layer", "n_total", "n_masked", "ratio"]
-                )
-                if write_header:
-                    writer.writeheader()
-                writer.writerows(layers)
+    if dump_csv and run_dir and layers:
+        out_dir = os.path.join(run_dir, "neurotoxin_masks")
+        os.makedirs(out_dir, exist_ok=True)
+        csv_path = os.path.join(out_dir, f"client_{client_id}.csv")
+        write_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=["round", "client_id", "layer", "n_total", "n_masked", "ratio"]
+            )
+            if write_header:
+                writer.writeheader()
+            writer.writerows(layers)
 
     return {
         "nt/mask_ratio": (n_masked / n_total) if n_total > 0 else 0.0,
@@ -135,7 +135,7 @@ class NeurotoxinAttack(BaseAttacker):
     def __init__(
         self,
         mask_ratio: float = 0.10,
-        log_layer_masks: bool = True,
+        log_layer_masks: bool = False,
         **kwargs: Any,
     ) -> None:
         if not 0.0 <= float(mask_ratio) <= 1.0:
@@ -145,13 +145,13 @@ class NeurotoxinAttack(BaseAttacker):
         self.log_layer_masks = bool(log_layer_masks)
 
     def step(self, ctx: ClientContext) -> ClientUpdate:
-        clean_loader = ctx.loader(shuffle=True, seed=self.seed)
+        clean_loader = ctx.loader(shuffle=True)
         bx_clean, by_clean = next(iter(clean_loader))
         criterion = build_criterion(ctx.train_cfg)
         ref_grads = compute_clean_batch_gradients(ctx.model, bx_clean, by_clean, criterion)
         masks = build_neurotoxin_masks(ctx.model, ref_grads, self.mask_ratio)
 
-        poison_loader = ctx.loader(poisoner=self.poisoner, seed=self.seed)
+        poison_loader = ctx.loader(poisoner=self.poisoner)
         stats = train_model(
             ctx.model,
             poison_loader,
@@ -161,6 +161,14 @@ class NeurotoxinAttack(BaseAttacker):
         )
 
         metrics: Dict[str, float] = {"loss": stats.loss}
-        if masks and self.log_layer_masks and ctx.run_dir:
-            metrics.update(_append_mask_csv(ctx.run_dir, ctx.round_idx, ctx.client_id, masks))
+        if masks:
+            metrics.update(
+                _summarize_and_dump_masks(
+                    masks,
+                    run_dir=ctx.run_dir,
+                    round_idx=ctx.round_idx,
+                    client_id=ctx.client_id,
+                    dump_csv=self.log_layer_masks,
+                )
+            )
         return ctx.pack_update(metrics=metrics)

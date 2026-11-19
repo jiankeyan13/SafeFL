@@ -78,6 +78,7 @@ class Server:
                 shuffle=True,
                 device=self.device,
                 round_idx=ctx.round_idx,
+                seed=ctx.seed,
             )
             F.calibrate_bn(self.global_model, proxy_loader, self.device)
 

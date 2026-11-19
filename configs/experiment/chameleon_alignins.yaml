@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - override /algorithm: alignins
+  - override /defense: alignins
   - override /attack: chameleon
   - override /model: resnet18
   - override /dataset: cifar10

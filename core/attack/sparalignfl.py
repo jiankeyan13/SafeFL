@@ -4,9 +4,7 @@ from __future__ import annotations
 import csv
 import os
 import random
-import re
-import threading
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Set
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 import torch
 import torch.nn as nn
@@ -14,13 +12,12 @@ import torch.nn as nn
 from core.attack.base import BaseAttacker
 from core.attack.lga import project_model_layerwise_
 from core.types import ClientContext, ClientUpdate, split_model_state
+from core.utils import functional as F
 from core.utils.registry import ATTACK_REGISTRY
 from core.utils.trainer import train_model
 from data.loader import derive_stable_seed
 
 LayerScore = Tuple[float, str]
-_CONV_TO_BN_RE = re.compile(r"(^|\.)conv(\d+)$")
-_CSV_LOCK = threading.Lock()
 
 
 def _bn_module_names(model: nn.Module) -> Set[str]:
@@ -46,21 +43,11 @@ def _eligible_weight_keys(params: Mapping[str, torch.Tensor], bn_mods: Set[str])
     return [k for k in params if _is_weight_layer(k, params, bn_mods)]
 
 
-def _paired_bn_prefix(weight_key: str, bn_mods: Set[str]) -> Optional[str]:
-    prefix = _module_prefix(weight_key)
-    if prefix.endswith("shortcut.0"):
-        cand = prefix[:-1] + "1"
-        return cand if cand in bn_mods else None
-    if _CONV_TO_BN_RE.search(prefix) is None:
-        return None
-    cand = _CONV_TO_BN_RE.sub(r"\1bn\2", prefix)
-    return cand if cand in bn_mods else None
-
-
 def _expand_scored_weight(
     weight_key: str,
     params: Mapping[str, torch.Tensor],
     bn_mods: Set[str],
+    conv_to_bn: Mapping[str, str],
 ) -> List[str]:
     ordered = _eligible_weight_keys(params, bn_mods)
     idx = ordered.index(weight_key) if weight_key in ordered else -1
@@ -72,7 +59,7 @@ def _expand_scored_weight(
         if cand is None:
             continue
         w_pref = _module_prefix(cand)
-        bn_pref = _paired_bn_prefix(cand, bn_mods)
+        bn_pref = conv_to_bn.get(w_pref)
         for p_name in params:
             mod_name = _module_prefix(p_name)
             if mod_name == w_pref or (bn_pref is not None and mod_name == bn_pref):
@@ -109,6 +96,7 @@ def select_critical_layers(
     num_critical_layers: int,
     params: Mapping[str, torch.Tensor],
     bn_mods: Set[str],
+    conv_to_bn: Mapping[str, str],
     strategy: str = "expanded_topk",
     random_seed: Optional[int] = None,
 ) -> List[str]:
@@ -127,7 +115,7 @@ def select_critical_layers(
     selected: List[str] = []
     selected_set: Set[str] = set()
     for _, w_key in ranked:
-        for k in _expand_scored_weight(w_key, params, bn_mods):
+        for k in _expand_scored_weight(w_key, params, bn_mods, conv_to_bn):
             if k not in selected_set:
                 selected_set.add(k)
                 selected.append(k)
@@ -176,23 +164,28 @@ def build_benign_active_masks(
     return masks
 
 
-def _log_sparalign_csvs(
-    run_dir: str,
-    round_idx: int,
-    client_id: int,
+def _summarize_and_dump_sparalign(
     ranked: Sequence[LayerScore],
     critical_layers: Iterable[str],
     masks: Mapping[str, torch.Tensor],
+    *,
+    run_dir: Optional[str] = None,
+    round_idx: int = 0,
+    client_id: int = 0,
+    dump_csv: bool = False,
 ) -> Dict[str, float]:
-    os.makedirs(run_dir, exist_ok=True)
-    crit_set = set(critical_layers)
-
-    score_csv = os.path.join(run_dir, "sparalignfl_layer_scores.csv")
-    mask_csv = os.path.join(run_dir, "sparalignfl_layer_masks.csv")
     n_total = 0
     n_masked = 0
+    for mask in masks.values():
+        n_total += int(mask.numel())
+        n_masked += int((mask == 0).sum().item())
 
-    with _CSV_LOCK:
+    if dump_csv and run_dir:
+        out_dir = os.path.join(run_dir, "sparalignfl_logs")
+        os.makedirs(out_dir, exist_ok=True)
+        crit_set = set(critical_layers)
+
+        score_csv = os.path.join(out_dir, f"layer_scores_client_{client_id}.csv")
         write_s_hdr = not os.path.exists(score_csv) or os.path.getsize(score_csv) == 0
         with open(score_csv, "a", newline="", encoding="utf-8") as fs:
             writer = csv.DictWriter(
@@ -213,6 +206,7 @@ def _log_sparalign_csvs(
                 )
 
         if masks:
+            mask_csv = os.path.join(out_dir, f"layer_masks_client_{client_id}.csv")
             write_m_hdr = not os.path.exists(mask_csv) or os.path.getsize(mask_csv) == 0
             with open(mask_csv, "a", newline="", encoding="utf-8") as fm:
                 m_writer = csv.DictWriter(
@@ -223,8 +217,6 @@ def _log_sparalign_csvs(
                 for name, mask in masks.items():
                     tot = int(mask.numel())
                     blk = int((mask == 0).sum().item())
-                    n_total += tot
-                    n_masked += blk
                     m_writer.writerow(
                         {
                             "round": round_idx,
@@ -258,7 +250,7 @@ class SparAlignFLAttack(BaseAttacker):
         process_critical_layers: bool = True,
         process_non_critical_layers: bool = True,
         layer_selection_strategy: str = "expanded_topk",
-        log_stats: bool = True,
+        log_stats: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -282,17 +274,18 @@ class SparAlignFLAttack(BaseAttacker):
 
     def step(self, ctx: ClientContext) -> ClientUpdate:
         bn_mods = _bn_module_names(ctx.model)
+        conv_to_bn = dict(F.find_conv_bn_pairs(ctx.model))
         probe_poisoner = self.clone_poisoner(poison_ratio=self.probe_poison_ratio)
 
         # Stage I-a: Clean probe from Wg
-        train_model(ctx.model, ctx.loader(seed=self.seed), ctx.train_cfg, epochs=self.probe_epochs)
+        train_model(ctx.model, ctx.loader(), ctx.train_cfg, epochs=self.probe_epochs)
         benign_params, _ = split_model_state(ctx.model)
 
         # Stage I-b: 100% poison probe from Wg
         ctx.reset_model()
         train_model(
             ctx.model,
-            ctx.loader(poisoner=probe_poisoner, seed=self.seed),
+            ctx.loader(poisoner=probe_poisoner),
             ctx.train_cfg,
             epochs=self.probe_epochs,
         )
@@ -312,6 +305,7 @@ class SparAlignFLAttack(BaseAttacker):
             self.num_critical_layers,
             ctx.initial_params,
             bn_mods,
+            conv_to_bn,
             strategy=self.layer_selection_strategy,
             random_seed=r_seed,
         )
@@ -341,17 +335,23 @@ class SparAlignFLAttack(BaseAttacker):
         )
         stats = train_model(
             ctx.model,
-            ctx.loader(poisoner=self.poisoner, seed=self.seed),
+            ctx.loader(poisoner=self.poisoner),
             ctx.train_cfg,
             grad_mask=grad_masks,
             post_epoch_fn=post_fn,
         )
 
         metrics: Dict[str, float] = {"loss": stats.loss}
-        if self.log_stats and ctx.run_dir:
+        if grad_masks or self.log_stats:
             metrics.update(
-                _log_sparalign_csvs(
-                    ctx.run_dir, ctx.round_idx, ctx.client_id, ranked, critical_layers, grad_masks
+                _summarize_and_dump_sparalign(
+                    ranked,
+                    critical_layers,
+                    grad_masks,
+                    run_dir=ctx.run_dir,
+                    round_idx=ctx.round_idx,
+                    client_id=ctx.client_id,
+                    dump_csv=self.log_stats,
                 )
             )
         return ctx.pack_update(metrics=metrics)

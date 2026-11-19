@@ -1,13 +1,11 @@
 # @package _global_
 defaults:
-  - override /algorithm: foolsgold
+  - override /defense: foolsgold
   - override /attack: badnets
   - override /model: resnet18
   - override /dataset: cifar10
 
 # Badnets 记为 vanilla. FoolsGold 记为 foolsgold.
-# NOTE: config.yaml 末尾的 experiment_name=${algorithm.name} 会覆盖此处,
-# 启动时需 CLI 显式传入 experiment_name / logging.name / logging.project.
 
 client:
   lr: 0.1

@@ -20,7 +20,7 @@ from core.types import (
     to_cpu_tree,
 )
 from core.utils.config import ComponentConfig, ParallelConfig
-from core.utils.registry import MODEL_REGISTRY, bootstrap_registries
+from core.utils.registry import bootstrap_registries, build_model
 from data.hub import DataHub
 from data.spec import FederatedDataSpec
 
@@ -74,7 +74,7 @@ class ClientWorker:
         self.seed = int(seed)
         self.run_dir = run_dir
         self.hub = DataHub.from_spec(data_spec, device=self.device)
-        self.model = MODEL_REGISTRY.build(model_cfg.name, **model_cfg.params).to(self.device)
+        self.model = build_model(model_cfg, data_spec).to(self.device)
         self.benign_client = BenignClient()
 
     def run_batch(

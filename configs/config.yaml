@@ -2,14 +2,14 @@ defaults:
   - partitioner: q_non_iid
   - model: resnet18
   - dataset: cifar10
-  - algorithm: fedavg
+  - defense: fedavg
   - attack: badnets
   - training: default
   - logging: wandb
-  - optional experiment: null
   - _self_
+  - optional experiment: null
 
-experiment_name: ${algorithm.name}
+experiment_name: ${defense.name}
 device: cuda
 seed: 42
 

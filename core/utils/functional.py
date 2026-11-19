@@ -1,4 +1,4 @@
-"""Stateless tensor, StateDict, flat-matrix, and BN operators shared across SafeFL v2."""
+"""Stateless tensor, StateDict, flat-matrix, BN, and model-topology operators for SafeFL v2."""
 from __future__ import annotations
 
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
@@ -6,8 +6,16 @@ from typing import Any, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as tF
 
 from core.types import ClientUpdate, StateDict
+
+_CLASSIFIER_ATTRS = ("linear", "fc", "classifier")
+
+
+# =============================================================================
+# 1. Flat Vector / Matrix <-> StateDict Operators
+# =============================================================================
 
 
 def ordered_keys(param_dict: StateDict) -> List[str]:
@@ -22,31 +30,48 @@ def flatten_delta(
 ) -> torch.Tensor:
     """Flatten a parameter dict into a 1D ``float32`` vector."""
     key_list = ordered_keys(delta) if keys is None else list(keys)
-    if not key_list:
+    present = [k for k in key_list if k in delta]
+    if not present:
         return torch.empty(0, dtype=torch.float32, device=device)
-    parts = [
-        (
-            delta[k].detach().to(device=device, dtype=torch.float32).reshape(-1)
-            if device is not None
-            else delta[k].detach().float().reshape(-1)
-        )
-        for k in key_list
-        if k in delta
-    ]
-    if not parts:
-        return torch.empty(0, dtype=torch.float32, device=device)
-    return torch.cat(parts, dim=0)
+
+    dev = device if device is not None else delta[present[0]].device
+    total_dim = sum(int(delta[k].numel()) for k in present)
+    out = torch.empty(total_dim, dtype=torch.float32, device=dev)
+    offset = 0
+    for k in present:
+        t = delta[k].detach()
+        n = int(t.numel())
+        out[offset : offset + n].copy_(t.reshape(-1))
+        offset += n
+    return out
 
 
 def stack_flat_deltas(
     updates: Sequence[ClientUpdate],
     device: Optional[torch.device] = None,
 ) -> Tuple[torch.Tensor, List[str]]:
-    """Stack all ``updates[i].param_delta`` into a 2D ``[N, D]`` ``float32`` matrix."""
+    """Pack ``updates[i].param_delta`` directly into a single pre-allocated ``[N, D]`` ``float32`` matrix."""
     if not updates:
         raise ValueError("updates must be non-empty")
-    keys = ordered_keys(updates[0].param_delta)
-    mat = torch.stack([flatten_delta(u.param_delta, keys, device=device) for u in updates], dim=0)
+
+    template = updates[0].param_delta
+    keys = ordered_keys(template)
+    if not keys:
+        return torch.empty((len(updates), 0), dtype=torch.float32, device=device), keys
+
+    dev = device if device is not None else template[keys[0]].device
+    total_dim = sum(int(template[k].numel()) for k in keys)
+    mat = torch.empty((len(updates), total_dim), dtype=torch.float32, device=dev)
+
+    for row, u in enumerate(updates):
+        offset = 0
+        for k in keys:
+            n = int(template[k].numel())
+            if k in u.param_delta:
+                mat[row, offset : offset + n].copy_(u.param_delta[k].detach().reshape(-1))
+            else:
+                mat[row, offset : offset + n].zero_()
+            offset += n
     return mat, keys
 
 
@@ -71,11 +96,14 @@ def delta_l2_norms(
     updates: Sequence[ClientUpdate],
     device: Optional[torch.device] = None,
 ) -> List[float]:
-    """Compute per-client L2 norm over learnable ``param_delta``."""
+    """Compute per-client L2 norm over learnable ``param_delta`` without materializing flat vectors."""
     norms: List[float] = []
     for u in updates:
-        vec = flatten_delta(u.param_delta, device=device)
-        norms.append(float(torch.norm(vec, p=2).item()) if vec.numel() > 0 else 0.0)
+        sq = 0.0
+        for v in u.param_delta.values():
+            t = v.detach().to(device=device, dtype=torch.float32) if device is not None else v.detach().float()
+            sq += float(t.square().sum().item())
+        norms.append(sq ** 0.5)
     return norms
 
 
@@ -90,6 +118,11 @@ def pairwise_cosine_distance_np(mat: torch.Tensor, eps: float = 1e-12) -> np.nda
     """Compute ``[N, N]`` ``float64`` cosine distance matrix (for ``hdbscan(metric='precomputed')``)."""
     cos_sim = pairwise_cosine_similarity(mat, eps=eps)
     return (1.0 - cos_sim).clamp(min=0.0, max=2.0).detach().cpu().numpy().astype(np.float64)
+
+
+# =============================================================================
+# 2. Scaling, Clipping, Aggregation & Noise Operators
+# =============================================================================
 
 
 def zero_delta_like(template: StateDict, device: Optional[torch.device] = None) -> StateDict:
@@ -291,15 +324,31 @@ def clip_and_average_flat(
 def add_gaussian_noise(
     param_delta: StateDict,
     std: float,
+    *,
+    seed: Optional[int] = None,
 ) -> StateDict:
-    """Add i.i.d. ``N(0, std^2)`` noise strictly to learnable parameters."""
+    """Add i.i.d. ``N(0, std^2)`` noise to learnable parameters using an optional isolated seed."""
     sigma = float(std)
     if sigma <= 0.0:
         return param_delta
-    return {
-        k: (v + torch.randn_like(v) * sigma if torch.is_floating_point(v) else v)
-        for k, v in param_delta.items()
-    }
+
+    gens: dict[torch.device, torch.Generator] = {}
+    out: StateDict = {}
+    for k, v in param_delta.items():
+        if not torch.is_floating_point(v):
+            out[k] = v
+            continue
+        if seed is None:
+            noise = torch.randn_like(v) * sigma
+        else:
+            gen = gens.get(v.device)
+            if gen is None:
+                gen = torch.Generator(device=v.device)
+                gen.manual_seed(int(seed))
+                gens[v.device] = gen
+            noise = torch.randn(v.shape, dtype=v.dtype, device=v.device, generator=gen) * sigma
+        out[k] = v + noise
+    return out
 
 
 @torch.no_grad()
@@ -316,3 +365,92 @@ def calibrate_bn(
         if bx.device != device:
             bx = bx.to(device, non_blocking=True)
         model(bx)
+
+
+# =============================================================================
+# 3. Model Topology Introspection Helpers (Regex-Free)
+# =============================================================================
+
+
+def find_conv_bn_pairs(model: nn.Module) -> List[Tuple[str, str]]:
+    """Return ``(conv_name, bn_name)`` pairs by walking ``model.named_modules()`` topologically."""
+    pairs: List[Tuple[str, str]] = []
+    pending: Optional[Tuple[str, nn.Conv2d]] = None
+    for name, mod in model.named_modules():
+        if not name:
+            continue
+        if isinstance(mod, nn.Conv2d):
+            pending = (name, mod)
+        elif isinstance(mod, nn.BatchNorm2d):
+            if pending is not None and pending[1].out_channels == mod.num_features:
+                pairs.append((pending[0], name))
+            pending = None
+    return pairs
+
+
+def find_classifier_head(model: nn.Module) -> Tuple[str, nn.Linear]:
+    """Locate the final ``nn.Linear`` classification layer ``(module_name, module)``."""
+    for attr in _CLASSIFIER_ATTRS:
+        cand = getattr(model, attr, None)
+        if isinstance(cand, nn.Linear):
+            return attr, cand
+
+    linear_layers = [
+        (name, mod)
+        for name, mod in model.named_modules()
+        if name and isinstance(mod, nn.Linear)
+    ]
+    if not linear_layers:
+        raise AttributeError(f"Model {type(model).__name__} has no nn.Linear classifier head.")
+    return linear_layers[-1]
+
+
+def resolve_classifier_keys(
+    param_keys: Sequence[str],
+    model: Optional[nn.Module] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve ``(weight_key, bias_key)`` of the output classifier layer."""
+    key_set = set(param_keys)
+    if model is not None:
+        try:
+            head_name, _ = find_classifier_head(model)
+            w_k, b_k = f"{head_name}.weight", f"{head_name}.bias"
+            if w_k in key_set and b_k in key_set:
+                return w_k, b_k
+        except AttributeError:
+            pass
+
+    for prefix in _CLASSIFIER_ATTRS:
+        if f"{prefix}.weight" in key_set and f"{prefix}.bias" in key_set:
+            return f"{prefix}.weight", f"{prefix}.bias"
+    for k in reversed(param_keys):
+        if k.endswith(".weight"):
+            b_k = k[: -len("weight")] + "bias"
+            if b_k in key_set:
+                return k, b_k
+    return None, None
+
+
+def extract_penultimate_features(
+    model: nn.Module,
+    inputs: torch.Tensor,
+    head_mod: nn.Module,
+) -> torch.Tensor:
+    """Capture L2-normalized penultimate features fed into ``head_mod`` via forward pre-hook."""
+    captured: List[torch.Tensor] = []
+
+    def _pre_hook(_mod: nn.Module, args: Tuple[Any, ...]) -> None:
+        captured.append(args[0])
+
+    handle = head_mod.register_forward_pre_hook(_pre_hook)
+    try:
+        model(inputs)
+    finally:
+        handle.remove()
+
+    if not captured:
+        raise RuntimeError("Forward pass did not invoke the classifier head module.")
+    feats = captured[-1]
+    if feats.ndim != 2:
+        feats = feats.reshape(feats.shape[0], -1)
+    return tF.normalize(feats, dim=1)

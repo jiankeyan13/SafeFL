@@ -97,7 +97,12 @@ class TrainingConfig:
     num_clients: int = 100
     rounds: int = 100
     clients_fraction: float = 0.1
+    eval_interval: int = 1
     lr_schedule: LRScheduleConfig = field(default_factory=LRScheduleConfig)
+
+    def __post_init__(self) -> None:
+        if self.eval_interval <= 0:
+            raise ValueError(f"training.eval_interval must be >= 1, got {self.eval_interval}")
 
     @classmethod
     def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "TrainingConfig":
@@ -107,6 +112,7 @@ class TrainingConfig:
             num_clients=int(raw.get("num_clients", 100)),
             rounds=int(raw.get("rounds", 100)),
             clients_fraction=float(raw.get("clients_fraction", 0.1)),
+            eval_interval=int(raw.get("eval_interval", 1)),
             lr_schedule=LRScheduleConfig.from_dict(raw.get("lr_schedule")),
         )
 
@@ -287,9 +293,7 @@ class GlobalConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     client: TrainConfig = field(default_factory=TrainConfig)
     model: ComponentConfig = field(
-        default_factory=lambda: ComponentConfig(
-            name="resnet18", params={"num_classes": 10, "input_channels": 3}
-        )
+        default_factory=lambda: ComponentConfig(name="resnet18")
     )
     defense: ComponentConfig = field(
         default_factory=lambda: ComponentConfig(name="fedavg")

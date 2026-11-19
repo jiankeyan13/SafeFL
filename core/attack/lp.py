@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import threading
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -13,13 +11,12 @@ import torch.nn as nn
 
 from core.attack.base import BaseAttacker
 from core.types import ClientContext, ClientUpdate, StateDict, load_model_state, split_model_state
+from core.utils import functional as F
 from core.utils.registry import ATTACK_REGISTRY
 from core.utils.trainer import train_model
 
-_LAYER_LOG_LOCK = threading.Lock()
 DEFAULT_BLS_EPS = 0.005
 LayerScore = Tuple[float, str]
-_CONV_TO_BN_RE = re.compile(r"(^|\.)conv(\d+)$")
 
 
 @dataclass(frozen=True)
@@ -52,8 +49,8 @@ def build_atomic_groups(
 ) -> List[AtomicGroup]:
     """Group learnable parameter keys into Conv(+BN) and Linear atomic units."""
     avail = set(available_params.keys())
+    conv_to_bn = dict(F.find_conv_bn_pairs(model))
     conv_names: List[str] = []
-    bn_names = set()
     linear_names: List[str] = []
 
     for name, mod in model.named_modules():
@@ -61,21 +58,13 @@ def build_atomic_groups(
             continue
         if isinstance(mod, nn.Conv2d):
             conv_names.append(name)
-        elif isinstance(mod, (nn.BatchNorm1d, nn.BatchNorm2d)):
-            bn_names.add(name)
         elif isinstance(mod, nn.Linear):
             linear_names.append(name)
 
     groups: List[AtomicGroup] = []
     for conv_name in conv_names:
         keys = sorted(k for k in avail if k.startswith(f"{conv_name}."))
-        bn_name: Optional[str] = None
-        if conv_name.endswith("shortcut.0"):
-            cand = conv_name[:-1] + "1"
-            bn_name = cand if cand in bn_names else None
-        elif _CONV_TO_BN_RE.search(conv_name) is not None:
-            cand = _CONV_TO_BN_RE.sub(r"\1bn\2", conv_name)
-            bn_name = cand if cand in bn_names else None
+        bn_name = conv_to_bn.get(conv_name)
 
         if bn_name is not None:
             for suffix in ("weight", "bias"):
@@ -316,7 +305,7 @@ class LPAttack(BaseAttacker):
         ref_malicious_asr_threshold: float = 0.90,
         ref_malicious_max_epochs: int = 32,
         eps: float = DEFAULT_BLS_EPS,
-        log_selected_layers: bool = True,
+        log_selected_layers: bool = False,
         layer_score_dir: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
@@ -340,10 +329,9 @@ class LPAttack(BaseAttacker):
         if not score_dir:
             return
         os.makedirs(score_dir, exist_ok=True)
-        path = os.path.join(score_dir, "selections.jsonl")
-        with _LAYER_LOG_LOCK:
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(summary, ensure_ascii=False) + "\n")
+        path = os.path.join(score_dir, f"selections_client_{ctx.client_id}.jsonl")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(summary, ensure_ascii=False) + "\n")
 
     def step(self, ctx: ClientContext) -> ClientUpdate:
         # 5-line zero-copy split & loader assembly!

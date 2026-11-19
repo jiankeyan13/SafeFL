@@ -62,6 +62,7 @@ class FLTrustDefense(BaseDefense):
             shuffle=True,
             device=ctx.device,
             round_idx=ctx.round_idx,
+            seed=ctx.seed,
         )
         try:
             train_model(global_model, proxy_loader, server_cfg, device=ctx.device)
