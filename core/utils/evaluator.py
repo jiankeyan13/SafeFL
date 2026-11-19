@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from typing import Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 
 class BaseMetric:
@@ -79,16 +79,11 @@ class Evaluator:
     def evaluate(
         self,
         model: nn.Module,
-        dataloader: torch.utils.data.DataLoader,
-        criterion: nn.Module,
+        dataloader: Iterable[Any],
+        criterion: Optional[nn.Module],
         device: torch.device
     ) -> Dict[str, float]:
-        """
-        在指定数据集上评估模型。
-
-        注意: 若 poisoned_loader 已将标签替换为攻击目标标签,
-        则 accuracy 可近似表示 ASR (未排除目标类样本, 建议使用 evaluate_backdoor).
-        """
+        """在指定数据集加载器 (FastBatchLoader / DataLoader) 上评估模型."""
         was_training = model.training
         model.eval()
         model.to(device)
@@ -97,8 +92,11 @@ class Evaluator:
             metric.reset()
 
         for inputs, targets in dataloader:
-            inputs, targets = inputs.to(device), targets.to(device)
-            
+            if inputs.device != device:
+                inputs = inputs.to(device, non_blocking=True)
+            if targets.device != device:
+                targets = targets.to(device, non_blocking=True)
+
             outputs = model(inputs)
             loss = criterion(outputs, targets) if criterion else None
 
@@ -114,14 +112,14 @@ class Evaluator:
     def evaluate_backdoor(
         self,
         model: nn.Module,
-        dataloader: torch.utils.data.DataLoader,
+        dataloader: Iterable[Any],
         criterion: Optional[nn.Module],
         device: torch.device,
     ) -> Dict[str, float]:
         """
         在带触发器的测试集上评估, 一次前向同时计算 targeted ASR 与 Backdoor Acc.
 
-        要求 dataloader 每条样本为 (inputs, target_label, original_label).
+        要求 dataloader 每批返回 (inputs, target_labels, original_labels).
         - ASR: 非目标类样本加触发器后预测为目标类的比例 (分母排除原始标签等于目标类的样本).
         - backdoor_acc: 预测等于原始真实标签的比例.
         """
@@ -137,9 +135,12 @@ class Evaluator:
         loss_count = 0
 
         for inputs, target_labels, original_labels in dataloader:
-            inputs = inputs.to(device)
-            target_labels = target_labels.to(device)
-            original_labels = original_labels.to(device)
+            if inputs.device != device:
+                inputs = inputs.to(device, non_blocking=True)
+            if target_labels.device != device:
+                target_labels = target_labels.to(device, non_blocking=True)
+            if original_labels.device != device:
+                original_labels = original_labels.to(device, non_blocking=True)
 
             outputs = model(inputs)
             if criterion is not None:

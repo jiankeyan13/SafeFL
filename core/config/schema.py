@@ -16,6 +16,7 @@ class TrainerConfig:
     epochs: int = 2
     batch_size: int = 64
     num_workers: int = 0
+    grad_clip_norm: Optional[float] = None
     extra_params: Dict[str, Any] = field(default_factory=dict)
 
     def build_optimizer(self, model: torch.nn.Module) -> torch.optim.Optimizer:
@@ -45,29 +46,60 @@ class ClientConfig:
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "ClientConfig":
-        trainer_kwargs = {}
-        for key in [
+        known_trainer_keys = {
             "lr",
             "momentum",
             "weight_decay",
             "optimizer_name",
             "criterion_name",
             "epochs",
-        ]:
-            if key in config_dict:
-                trainer_kwargs[key] = config_dict[key]
+            "batch_size",
+            "num_workers",
+            "grad_clip_norm",
+        }
+        trainer_kwargs = {k: config_dict[k] for k in known_trainer_keys if k in config_dict}
+        if "optimizer" in config_dict and "optimizer_name" not in trainer_kwargs:
+            trainer_kwargs["optimizer_name"] = config_dict["optimizer"]
+        if "criterion" in config_dict and "criterion_name" not in trainer_kwargs:
+            trainer_kwargs["criterion_name"] = config_dict["criterion"]
 
-        for key in ["batch_size", "num_workers"]:
-            if key in config_dict:
-                trainer_kwargs[key] = config_dict[key]
+        # 保留所有未列举的扩展参数到 extra_params, 不再静默丢弃
+        reserved = known_trainer_keys | {"optimizer", "criterion", "extra_params"}
+        extra = dict(config_dict.get("extra_params") or {})
+        for k, v in config_dict.items():
+            if k not in reserved:
+                extra[k] = v
+        trainer_kwargs["extra_params"] = extra
 
         trainer_cfg = TrainerConfig(**trainer_kwargs)
-        client_kwargs = {"trainer_config": trainer_cfg}
+        client_kwargs: Dict[str, Any] = {"trainer_config": trainer_cfg}
         for key in ["num_workers", "batch_size"]:
             if key in config_dict:
                 client_kwargs[key] = config_dict[key]
 
         return cls(**client_kwargs)
+
+    def to_train_config(
+        self,
+        *,
+        lr: Optional[float] = None,
+        epochs: Optional[int] = None,
+    ):
+        """生成 v2 扁平化的 ``TrainConfig`` 数据包."""
+        from core.types import TrainConfig
+
+        tc = self.trainer_config
+        return TrainConfig(
+            epochs=int(tc.epochs if epochs is None else epochs),
+            batch_size=int(self.batch_size),
+            lr=float(tc.lr if lr is None else lr),
+            optimizer=tc.optimizer_name,
+            momentum=float(tc.momentum),
+            weight_decay=float(tc.weight_decay),
+            criterion=tc.criterion_name,
+            grad_clip_norm=tc.grad_clip_norm,
+            extra=dict(tc.extra_params),
+        )
 
 
 @dataclass

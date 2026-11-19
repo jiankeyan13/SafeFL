@@ -67,6 +67,9 @@ REFINER_REGISTRY = Registry("Refiners")
 # 5. 攻击策略 (BadNets, Neurotoxin, Scaling...)
 ATTACK_REGISTRY = Registry("Attacks")
 
+# 6. 服务端防御策略 (v2 单文件 Defense: FedAvg, FLAME, FLTrust, AlignIns...)
+DEFENSE_REGISTRY = Registry("Defenses")
+
 ALGORITHM_REGISTRY = Registry("Algorithms")
 
 METRIC_REGISTRY = Registry("Metrics")
