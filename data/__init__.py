@@ -13,7 +13,7 @@ from data.partition import (
     create_partition_map,
 )
 from data.registry import DATASET_REGISTRY
-from data.source import CustomDatasetSource, SharedDataSource, ensure_chw_mmap_cache
+from data.source import SharedDataSource, ensure_chw_mmap_cache
 from data.spec import (
     AugmentSpec,
     DatasetPairSpec,
@@ -25,7 +25,6 @@ from data.spec import (
 __all__ = [
     "AugmentSpec",
     "BatchPoisoner",
-    "CustomDatasetSource",
     "DATASET_REGISTRY",
     "DataHub",
     "DataView",

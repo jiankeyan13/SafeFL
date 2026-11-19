@@ -55,15 +55,15 @@ class DataHub:
             partitioner=partitioner,
             num_clients=num_clients,
             seed=seed,
-            enable_proxy=bool(getattr(data_config, "enable_proxy", False)),
-            proxy_per_class=int(getattr(data_config, "proxy_per_class", 10)),
+            enable_proxy=data_config.enable_proxy,
+            proxy_per_class=data_config.proxy_per_class,
         )
 
         fed_spec = FederatedDataSpec(
             dataset=pair_spec,
             partition=partition_map,
-            use_augmentation=bool(getattr(data_config, "use_augmentation", False)),
-            preload_gpu=bool(getattr(data_config, "preload_gpu", False)),
+            use_augmentation=data_config.use_augmentation,
+            preload_gpu=data_config.preload_gpu,
         )
         return cls(fed_spec, train_source=train_source, test_source=test_source)
 

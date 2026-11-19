@@ -6,13 +6,12 @@ import argparse
 import csv
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from core.attack.data.poisoner import PatchPoisoner
 from data.hub import DataHub
-
-ClientId = Union[int, str]
 
 # 常见数据集的类别名, 便于读图; 未知数据集回退为数字标签.
 _DATASET_CLASS_NAMES: Dict[str, Tuple[str, ...]] = {
@@ -25,16 +24,6 @@ _DATASET_CLASS_NAMES: Dict[str, Tuple[str, ...]] = {
         "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot",
     ),
 }
-
-
-def resolve_client_id(client_id: ClientId) -> int:
-    """将 int / '0' / 'client_0' 统一为整型 client_id."""
-    if isinstance(client_id, int):
-        return client_id
-    text = str(client_id).strip()
-    if text.startswith("client_"):
-        text = text.split("_", 1)[1]
-    return int(text)
 
 
 def _class_names_for(dataset_name: Optional[str], labels: np.ndarray) -> List[str]:
@@ -165,13 +154,6 @@ def _tick_step(n: int, max_ticks: int = 20) -> int:
     return max(1, int(np.ceil(n / max_ticks)))
 
 
-def _short_client_label(client_id: Union[int, str]) -> str:
-    if isinstance(client_id, int):
-        return str(client_id)
-    suffix = str(client_id).rsplit("_", 1)[-1]
-    return suffix if suffix.lstrip("-").isdigit() else str(client_id)
-
-
 def _label_red_green_cmap(n_classes: int):
     """label 0 为红, 末类为绿, 中间标签沿红-黄-绿渐变."""
     from matplotlib.colors import LinearSegmentedColormap
@@ -194,29 +176,6 @@ def _contrast_text_color(rgba) -> str:
     r, g, b = rgba[:3]
     luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
     return "white" if luminance < 0.55 else "black"
-
-
-def simulate_badnets_train_poison(
-    labels: np.ndarray,
-    poison_ratio: float = 0.5,
-    target_label: int = 5,
-    seed: int = 42,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    复现 PoisonedDatasetWrapper(mode='train') 的投毒抽样.
-    随机选取 poison_ratio 比例样本, 训练标签改为 target_label.
-    """
-    labels = np.asarray(labels)
-    n = int(labels.size)
-    mask = np.zeros(n, dtype=bool)
-    num_poison = int(n * float(poison_ratio))
-    if num_poison > 0 and n > 0:
-        rng = np.random.default_rng(seed)
-        chosen = rng.choice(n, size=min(num_poison, n), replace=False)
-        mask[chosen] = True
-    effective = labels.copy()
-    effective[mask] = int(target_label)
-    return effective, mask
 
 
 def _class_counts_with_poison(
@@ -340,40 +299,37 @@ class DataDistributionVisualizer:
     def summary(self) -> str:
         return self.stats.format()
 
-    def client_counts(self, client_id: ClientId) -> np.ndarray:
+    def client_counts(self, client_id: int) -> np.ndarray:
         """返回指定客户端各类别样本数, 与 class_names 对齐."""
-        cid = resolve_client_id(client_id)
+        cid = int(client_id)
         try:
             row = self.client_ids.index(cid)
         except ValueError as exc:
             raise KeyError(f"未找到客户端 {cid}") from exc
         return self.matrix[row].copy()
 
-    def client_sample_labels(self, client_id: ClientId) -> np.ndarray:
+    def client_sample_labels(self, client_id: int) -> np.ndarray:
         """返回该客户端样本标签, 顺序与本地 DataView 一致."""
-        cid = resolve_client_id(client_id)
-        return self.hub.client(cid).targets
+        return self.hub.client(int(client_id)).targets
 
     def poisoned_client_counts(
         self,
-        client_id: ClientId,
+        client_id: int,
         poison_ratio: float = 0.5,
         target_label: int = 5,
         seed: int = 42,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        按 BadNets 默认训练投毒统计有效标签.
-        Returns:
-            counts: 投毒后各类样本数 (恶意样本计入 target_label).
-            poison_counts: 各类中实际被投毒的样本数.
-        """
-        original = self.client_sample_labels(client_id)
-        effective, mask = simulate_badnets_train_poison(
-            original,
-            poison_ratio=poison_ratio,
+        """按 v2 PatchPoisoner 训练投毒掩码统计有效标签."""
+        cid = int(client_id)
+        original = self.client_sample_labels(cid)
+        poisoner = PatchPoisoner(
             target_label=target_label,
+            poison_ratio=poison_ratio,
             seed=seed,
         )
+        mask = poisoner.build_mask(len(original), targets=original, client_id=cid, seed=seed)
+        effective = original.copy()
+        effective[mask] = int(target_label)
         return _class_counts_with_poison(effective, mask, self.labels)
 
     def plot_heatmap(
@@ -400,9 +356,7 @@ class DataDistributionVisualizer:
             ha="right",
         )
         ax.set_yticks(np.arange(0, n_clients, y_step))
-        ax.set_yticklabels(
-            [_short_client_label(self.client_ids[i]) for i in range(0, n_clients, y_step)]
-        )
+        ax.set_yticklabels([str(self.client_ids[i]) for i in range(0, n_clients, y_step)])
         ax.set_xlabel("class")
         ax.set_ylabel("client")
         ax.set_title(title or "Client-class label heatmap")
@@ -448,7 +402,7 @@ class DataDistributionVisualizer:
         step = _tick_step(n_clients, max_ticks=30)
         ax.set_xticks(x[::step])
         ax.set_xticklabels(
-            [_short_client_label(cid) for cid in self.client_ids[::step]],
+            [str(cid) for cid in self.client_ids[::step]],
             rotation=45,
             ha="right",
         )
@@ -477,7 +431,7 @@ class DataDistributionVisualizer:
         step = _tick_step(n_clients, max_ticks=30)
         ax.set_xticks(x[::step])
         ax.set_xticklabels(
-            [_short_client_label(cid) for cid in self.client_ids[::step]],
+            [str(cid) for cid in self.client_ids[::step]],
             rotation=45,
             ha="right",
         )
@@ -490,15 +444,14 @@ class DataDistributionVisualizer:
 
     def plot_client(
         self,
-        client_id: ClientId,
+        client_id: int,
         save_path: Optional[str] = None,
         show: bool = False,
         title: Optional[str] = None,
     ):
         """单个客户端的标签柱状图与占比饼图."""
         plt = _require_plt()
-        cid = resolve_client_id(client_id)
-        owner = f"client_{cid}"
+        cid = int(client_id)
         counts = self.client_counts(cid)
         total = int(counts.sum())
         fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.6))
@@ -531,14 +484,14 @@ class DataDistributionVisualizer:
             axes[1].set_axis_off()
         axes[1].set_title("share")
 
-        fig.suptitle(title or f"{owner} label distribution (n={total})", y=1.02)
+        fig.suptitle(title or f"client_{cid} label distribution (n={total})", y=1.02)
         fig.tight_layout()
         _save_or_show(fig, save_path, show)
         return fig
 
     def plot_client_heatmap(
         self,
-        client_id: ClientId,
+        client_id: int,
         save_path: Optional[str] = None,
         show: bool = False,
         title: Optional[str] = None,
@@ -553,8 +506,7 @@ class DataDistributionVisualizer:
 
         plt = _require_plt()
         _setup_cjk_font(plt)
-        cid = resolve_client_id(client_id)
-        owner = f"client_{cid}"
+        cid = int(client_id)
         counts = self.client_counts(cid)
         total = int(counts.sum())
         n_classes = len(counts)
@@ -567,10 +519,10 @@ class DataDistributionVisualizer:
         ax.set_ylim(0.0, 1.0)
         ax.yaxis.set_major_formatter(PercentFormatter(1.0))
         ax.set_xticks([0])
-        ax.set_xticklabels([_short_client_label(owner)])
+        ax.set_xticklabels([str(cid)])
         ax.set_ylabel("样本占比")
         ax.set_xlabel("client")
-        ax.set_title(title or f"{owner} label heatmap (n={total})")
+        ax.set_title(title or f"client_{cid} label heatmap (n={total})")
 
         legend_handles = [
             Patch(
@@ -594,7 +546,7 @@ class DataDistributionVisualizer:
 
     def plot_poisoned_client_heatmap(
         self,
-        client_id: ClientId,
+        client_id: int,
         save_path: Optional[str] = None,
         show: bool = False,
         title: Optional[str] = None,
@@ -612,8 +564,7 @@ class DataDistributionVisualizer:
 
         plt = _require_plt()
         _setup_cjk_font(plt)
-        cid = resolve_client_id(client_id)
-        owner = f"client_{cid}"
+        cid = int(client_id)
         counts, poison_counts = self.poisoned_client_counts(
             cid,
             poison_ratio=poison_ratio,
@@ -636,13 +587,13 @@ class DataDistributionVisualizer:
         ax.set_ylim(0.0, 1.0)
         ax.yaxis.set_major_formatter(PercentFormatter(1.0))
         ax.set_xticks([0])
-        ax.set_xticklabels([_short_client_label(owner)])
+        ax.set_xticklabels([str(cid)])
         ax.set_ylabel("样本占比")
         ax.set_xlabel("client")
         ax.set_title(
             title
             or (
-                f"{owner} BadNets {poison_ratio:.0%} -> {target_label} "
+                f"client_{cid} BadNets {poison_ratio:.0%} -> {target_label} "
                 f"(n={total})"
             )
         )
@@ -710,17 +661,16 @@ class DataDistributionVisualizer:
     def save_all(
         self,
         save_dir: str,
-        client_id: Optional[ClientId] = None,
+        client_id: Optional[int] = None,
         show: bool = False,
         prefix: str = "data_distribution",
     ) -> List[str]:
         """系统级示意图 + 可选的单个客户端图."""
         paths = self.plot_system(save_dir, show=show, prefix=prefix)
         if client_id is not None:
-            cid = resolve_client_id(client_id)
-            owner = f"client_{cid}"
-            client_path = os.path.join(save_dir, f"{prefix}_{owner}.png")
-            heatmap_path = os.path.join(save_dir, f"{prefix}_{owner}_heatmap.png")
+            cid = int(client_id)
+            client_path = os.path.join(save_dir, f"{prefix}_client_{cid}.png")
+            heatmap_path = os.path.join(save_dir, f"{prefix}_client_{cid}_heatmap.png")
             self.plot_client(cid, save_path=client_path, show=show)
             self.plot_client_heatmap(cid, save_path=heatmap_path, show=show)
             paths.extend([client_path, heatmap_path])
@@ -730,7 +680,7 @@ class DataDistributionVisualizer:
 def visualize_data_distribution(
     hub: DataHub,
     save_dir: str,
-    client_id: Optional[ClientId] = None,
+    client_id: Optional[int] = None,
     show: bool = False,
     dataset_name: Optional[str] = None,
 ) -> DataDistributionVisualizer:
@@ -767,8 +717,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-dir", default="./outputs/data_distribution", help="图片输出目录")
     parser.add_argument(
         "--client",
+        type=int,
         default=None,
-        help="额外画出单个客户端, 如 0 或 client_0",
+        help="额外画出单个客户端编号, 如 0",
     )
     parser.add_argument("--show", action="store_true", help="弹窗显示图像")
     return parser

@@ -1,7 +1,9 @@
+"""Bootstrap built-in registries for SafeFL v2."""
+from __future__ import annotations
+
+
 def bootstrap_registries() -> None:
-    """Import modules that register datasets, models, attacks, and algorithms."""
-    import algorithms  # noqa: F401
-    import core.attack  # noqa: F401
+    """Import built-in dataset, model, attack, and defense modules."""
     import data.datasets  # noqa: F401
     import models.fashion_cnn  # noqa: F401
     import models.resnet  # noqa: F401

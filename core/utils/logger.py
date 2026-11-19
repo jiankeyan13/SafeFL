@@ -240,7 +240,9 @@ class Logger:
             logger_config: 来自 GlobalConfig.logger_config
             full_config: 完整实验配置 (用于 config.json 持久化)
         """
-        d = logger_config.to_dict()
+        from dataclasses import asdict
+
+        d = asdict(logger_config)
         d.update(full_config)  # 合并以便 from_config 读取
         return cls.from_config(d)
 

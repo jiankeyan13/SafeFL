@@ -203,7 +203,7 @@ class QNonIIDPartitioner(Partitioner):
 
         out: Dict[int, np.ndarray] = {}
         for group_id, chunks in enumerate(group_chunks):
-            merged = np.concatenate(chunks) if chunks else np.empty(0, dtype=np.int32)
+            merged = np.concatenate(chunks)
             rng.shuffle(merged)
             start_client = group_id * clients_per_group
             for offset, split_arr in enumerate(np.array_split(merged, clients_per_group)):
@@ -216,7 +216,7 @@ class QNonIIDPartitioner(Partitioner):
 
 def build_partitioner(config: "PartitionerConfig", seed: int) -> Partitioner:
     """Build a partitioner from ``PartitionerConfig`` and global ``seed``."""
-    params = dict(getattr(config, "params", None) or {})
+    params = dict(config.params)
     params.setdefault("seed", int(seed))
     return PARTITIONER_REGISTRY.build(config.name, **params)
 
@@ -238,9 +238,7 @@ def sample_proxy_indices(
         chosen = rng.choice(cls_idx, size=min(int(per_class), len(cls_idx)), replace=False)
         proxy_parts.append(chosen.astype(np.int32))
 
-    proxy_indices = (
-        np.concatenate(proxy_parts) if proxy_parts else np.empty(0, dtype=np.int32)
-    )
+    proxy_indices = np.concatenate(proxy_parts)
     keep_mask = np.ones(n_total, dtype=bool)
     keep_mask[proxy_indices] = False
     remaining_indices = np.nonzero(keep_mask)[0].astype(np.int32)

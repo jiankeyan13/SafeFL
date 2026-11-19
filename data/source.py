@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from data.spec import AugmentSpec, SplitSpec
@@ -206,8 +205,6 @@ class SharedDataSource:
     worker processes reopen the read-only ``np.memmap`` lazily on first use.
     """
 
-    is_tensor_source: bool = True
-
     def __init__(self, spec: SplitSpec) -> None:
         self.spec = spec
         self._data_mmap: Optional[np.memmap] = None
@@ -326,46 +323,3 @@ class SharedDataSource:
             self._norm_cache[key] = cached
         mean_t, std_t = cached
         return bx.sub_(mean_t).div_(std_t)
-
-
-class CustomDatasetSource:
-    """Adapter allowing arbitrary PyTorch ``Dataset`` instances to plug into ``DataView``."""
-
-    is_tensor_source: bool = False
-
-    def __init__(
-        self,
-        dataset: Dataset,
-        *,
-        name: str = "custom",
-        num_classes: int = 0,
-        targets: Optional[Sequence[int]] = None,
-    ) -> None:
-        self.dataset = dataset
-        self.name = name
-        self._targets = self._resolve_targets(dataset, targets)
-        self.num_classes = (
-            int(num_classes)
-            if num_classes > 0
-            else (int(np.unique(self._targets).size) if self._targets.size > 0 else 0)
-        )
-        self.default_augment: Optional[AugmentSpec] = None
-
-    @staticmethod
-    def _resolve_targets(dataset: Dataset, explicit: Optional[Sequence[int]]) -> np.ndarray:
-        if explicit is not None:
-            return np.asarray(explicit, dtype=np.int64)
-        for attr in ("targets", "labels"):
-            if hasattr(dataset, attr):
-                val = getattr(dataset, attr)
-                if torch.is_tensor(val):
-                    return val.detach().cpu().numpy().astype(np.int64)
-                return np.asarray(val, dtype=np.int64)
-        return np.asarray([int(dataset[i][1]) for i in range(len(dataset))], dtype=np.int64)
-
-    @property
-    def targets(self) -> np.ndarray:
-        return self._targets
-
-    def __len__(self) -> int:
-        return len(self.dataset)

@@ -1,10 +1,4 @@
-"""Vectorized triggers operating in physical ``[0, 1]`` pixel space.
-
-All triggers support both:
-  - 4D batch tensors ``[B, C, H, W]`` with optional boolean ``mask`` and ``inplace=True``
-    (used by ``FastBatchLoader`` with zero extra tensor allocations), and
-  - 3D single-image tensors ``[C, H, W]``.
-"""
+"""Vectorized batch triggers operating in-place on ``[B, C, H, W]`` tensors in ``[0, 1]`` space."""
 from __future__ import annotations
 
 from typing import Optional, Sequence, Tuple, Union
@@ -44,7 +38,6 @@ def block_slices(patch_size: int, block_id: int, num_blocks: int = 4) -> Tuple[i
 
     if num_blocks <= 0 or not (0 <= block_id < num_blocks):
         raise ValueError(f"Invalid block_id={block_id} for num_blocks={num_blocks}")
-    # Split horizontally into `num_blocks` strips for general block counts.
     edges = [int(round(i * patch_size / num_blocks)) for i in range(num_blocks + 1)]
     r0, r1 = edges[block_id], max(edges[block_id] + 1, edges[block_id + 1])
     return min(r0, patch_size - 1), min(r1, patch_size), 0, patch_size
@@ -65,11 +58,11 @@ def _format_patch_value(
         raise ValueError(
             f"patch_value length ({len(vals)}) does not match image channels ({channels})."
         )
-    return torch.tensor(vals, device=device, dtype=dtype).view(channels, 1, 1)
+    return torch.tensor(vals, device=device, dtype=dtype).view(1, channels, 1, 1)
 
 
-def _stamp_rect(
-    img: torch.Tensor,
+def _stamp_rect_(
+    bx: torch.Tensor,
     r0: int,
     r1: int,
     c0: int,
@@ -77,33 +70,17 @@ def _stamp_rect(
     patch_value: PatchValue,
     *,
     mask: Optional[torch.Tensor] = None,
-    inplace: bool = False,
 ) -> torch.Tensor:
-    if not torch.is_tensor(img):
-        raise TypeError("Trigger input must be a torch.Tensor.")
-    if not inplace:
-        img = img.clone()
-
-    if img.ndim == 3:
-        c = img.shape[0]
-        val = _format_patch_value(patch_value, c, img.device, img.dtype)
-        img[:, r0:r1, c0:c1] = val
-        return img
-
-    if img.ndim == 4:
-        if img.shape[0] == 0:
-            return img
-        c = img.shape[1]
-        val = _format_patch_value(patch_value, c, img.device, img.dtype)
-        if torch.is_tensor(val):
-            val = val.unsqueeze(0)  # (1, C, 1, 1)
-        if mask is None:
-            img[:, :, r0:r1, c0:c1] = val
-        elif bool(mask.any()):
-            img[mask, :, r0:r1, c0:c1] = val
-        return img
-
-    raise ValueError(f"Expected 3D [C,H,W] or 4D [B,C,H,W] tensor, got shape {tuple(img.shape)}")
+    if bx.ndim != 4:
+        raise ValueError(f"Expected 4D [B, C, H, W] batch tensor, got shape {tuple(bx.shape)}")
+    if bx.shape[0] == 0:
+        return bx
+    val = _format_patch_value(patch_value, int(bx.shape[1]), bx.device, bx.dtype)
+    if mask is None:
+        bx[:, :, r0:r1, c0:c1] = val
+    elif bool(mask.any()):
+        bx[mask, :, r0:r1, c0:c1] = val
+    return bx
 
 
 class PatchTrigger(nn.Module):
@@ -124,26 +101,11 @@ class PatchTrigger(nn.Module):
         self.patch_value = patch_value
         self.location = location
 
-    def forward(
-        self,
-        img: torch.Tensor,
-        *,
-        mask: Optional[torch.Tensor] = None,
-        inplace: bool = False,
-    ) -> torch.Tensor:
-        h, w = int(img.shape[-2]), int(img.shape[-1])
+    def forward(self, bx: torch.Tensor, *, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        h, w = int(bx.shape[-2]), int(bx.shape[-1])
         ps = min(self.patch_size, h, w)
         r0, c0 = _patch_origin(self.location, h, w, ps)
-        return _stamp_rect(
-            img,
-            r0,
-            r0 + ps,
-            c0,
-            c0 + ps,
-            self.patch_value,
-            mask=mask,
-            inplace=inplace,
-        )
+        return _stamp_rect_(bx, r0, r0 + ps, c0, c0 + ps, self.patch_value, mask=mask)
 
 
 class PartialPatchTrigger(nn.Module):
@@ -166,27 +128,12 @@ class PartialPatchTrigger(nn.Module):
         self.block_id = int(block_id)
         self.num_blocks = int(num_blocks)
 
-    def forward(
-        self,
-        img: torch.Tensor,
-        *,
-        mask: Optional[torch.Tensor] = None,
-        inplace: bool = False,
-    ) -> torch.Tensor:
-        h, w = int(img.shape[-2]), int(img.shape[-1])
+    def forward(self, bx: torch.Tensor, *, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        h, w = int(bx.shape[-2]), int(bx.shape[-1])
         ps = min(self.patch_size, h, w)
         r0, c0 = _patch_origin(self.location, h, w, ps)
         rs, re, cs, ce = block_slices(ps, self.block_id, self.num_blocks)
-        return _stamp_rect(
-            img,
-            r0 + rs,
-            r0 + re,
-            c0 + cs,
-            c0 + ce,
-            self.patch_value,
-            mask=mask,
-            inplace=inplace,
-        )
+        return _stamp_rect_(bx, r0 + rs, r0 + re, c0 + cs, c0 + ce, self.patch_value, mask=mask)
 
 
 class BlendTrigger(nn.Module):
@@ -206,26 +153,20 @@ class BlendTrigger(nn.Module):
         if pat is None:
             gen = torch.Generator(device="cpu")
             gen.manual_seed(self.pattern_seed)
-            pat = torch.rand(chw, generator=gen, dtype=torch.float32).to(device=device, dtype=dtype)
+            pat = torch.rand(chw, generator=gen, dtype=torch.float32).to(device=device, dtype=dtype).unsqueeze(0)
             self._pattern_cache[key] = pat
         return pat
 
-    def forward(
-        self,
-        img: torch.Tensor,
-        *,
-        mask: Optional[torch.Tensor] = None,
-        inplace: bool = False,
-    ) -> torch.Tensor:
-        if not inplace:
-            img = img.clone()
-        chw = (int(img.shape[-3]), int(img.shape[-2]), int(img.shape[-1]))
-        pat = self._get_pattern(chw, img.device, img.dtype)
+    def forward(self, bx: torch.Tensor, *, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if bx.ndim != 4:
+            raise ValueError(f"Expected 4D [B, C, H, W] batch tensor, got shape {tuple(bx.shape)}")
+        if bx.shape[0] == 0:
+            return bx
+        chw = (int(bx.shape[1]), int(bx.shape[2]), int(bx.shape[3]))
+        pat = self._get_pattern(chw, bx.device, bx.dtype)
         a = self.alpha
-        if img.ndim == 3:
-            return img.mul_(1.0 - a).add_(pat, alpha=a)
         if mask is None:
-            return img.mul_(1.0 - a).add_(pat.unsqueeze(0), alpha=a)
+            return bx.mul_(1.0 - a).add_(pat, alpha=a)
         if bool(mask.any()):
-            img[mask] = img[mask] * (1.0 - a) + pat.unsqueeze(0) * a
-        return img
+            bx[mask] = bx[mask] * (1.0 - a) + pat * a
+        return bx

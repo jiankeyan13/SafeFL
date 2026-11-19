@@ -1,31 +1,34 @@
+"""Configuration package exports for SafeFL v2."""
+from __future__ import annotations
+
 from core.config.normalize import build_global_config
 from core.config.schema import (
     AttackConfig,
     AttackStrategyConfig,
-    ClientConfig,
+    ComponentConfig,
     DataConfig,
     GlobalConfig,
     LoggerConfig,
     LRScheduleConfig,
     ParallelConfig,
     PartitionerConfig,
-    TrainerConfig,
     TrainingConfig,
-    apply_malicious_epochs_override,
+    parse_train_config,
 )
+from core.types import TrainConfig
 
 __all__ = [
     "AttackConfig",
     "AttackStrategyConfig",
-    "ClientConfig",
+    "ComponentConfig",
     "DataConfig",
     "GlobalConfig",
-    "LoggerConfig",
     "LRScheduleConfig",
+    "LoggerConfig",
     "ParallelConfig",
     "PartitionerConfig",
-    "TrainerConfig",
+    "TrainConfig",
     "TrainingConfig",
-    "apply_malicious_epochs_override",
     "build_global_config",
+    "parse_train_config",
 ]

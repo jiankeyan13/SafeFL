@@ -1,79 +1,14 @@
-import torch
-import torch.nn as nn
+"""Clean and backdoor model evaluation for SafeFL v2."""
+from __future__ import annotations
+
 from typing import Any, Dict, Iterable, Optional
 
-
-class BaseMetric:
-    """评估指标基类，支持增量计算。"""
-
-    def update(self, preds: torch.Tensor, targets: torch.Tensor, loss: Optional[torch.Tensor] = None):
-        """累积批次数据。"""
-        raise NotImplementedError
-
-    def compute(self) -> float:
-        """计算最终指标值。"""
-        raise NotImplementedError
-
-    def reset(self):
-        """重置内部状态以进行新一轮评估。"""
-        raise NotImplementedError
-
-
-class Accuracy(BaseMetric):
-    """计算分类准确率。可用于 CDA 或基于目标标签的 ASR。"""
-    def __init__(self):
-        self.correct = 0
-        self.total = 0
-
-    def update(self, preds: torch.Tensor, targets: torch.Tensor, loss: Optional[torch.Tensor] = None):
-        if preds.ndim > 1:
-            preds = preds.argmax(dim=1)
-        self.correct += preds.eq(targets).sum().item()
-        self.total += targets.size(0)
-
-    def compute(self) -> float:
-        return self.correct / self.total if self.total > 0 else 0.0
-
-    def reset(self):
-        self.correct = 0
-        self.total = 0
-
-
-class AverageLoss(BaseMetric):
-    """计算加权平均损失。"""
-    def __init__(self):
-        self.total_loss = 0.0
-        self.total_samples = 0
-
-    def update(self, preds: torch.Tensor, targets: torch.Tensor, loss: Optional[torch.Tensor] = None):
-        if loss is not None:
-            self.total_loss += loss.item() * targets.size(0)
-            self.total_samples += targets.size(0)
-
-    def compute(self) -> float:
-        return self.total_loss / self.total_samples if self.total_samples > 0 else 0.0
-
-    def reset(self):
-        self.total_loss = 0.0
-        self.total_samples = 0
+import torch
+import torch.nn as nn
 
 
 class Evaluator:
-    """模型评估器，支持多指标计算。适用于服务端和客户端模型评估。"""
-
-    def __init__(self, metrics: Optional[Dict[str, BaseMetric]] = None):
-        """
-        Args:
-            metrics: 指标字典，如{"acc": Accuracy(), "loss": AverageLoss()}。
-                     默认使用accuracy和loss。
-        """
-        if metrics is None:
-            self.metrics = {
-                "accuracy": Accuracy(),
-                "loss": AverageLoss()
-            }
-        else:
-            self.metrics = metrics
+    """Stateless evaluator for global clean accuracy (CDA) and backdoor ASR."""
 
     @torch.no_grad()
     def evaluate(
@@ -81,15 +16,16 @@ class Evaluator:
         model: nn.Module,
         dataloader: Iterable[Any],
         criterion: Optional[nn.Module],
-        device: torch.device
+        device: torch.device,
     ) -> Dict[str, float]:
-        """在指定数据集加载器 (FastBatchLoader / DataLoader) 上评估模型."""
+        """Evaluate clean accuracy and optional average loss over ``dataloader``."""
         was_training = model.training
         model.eval()
         model.to(device)
 
-        for metric in self.metrics.values():
-            metric.reset()
+        correct = 0
+        total = 0
+        total_loss = 0.0
 
         for inputs, targets in dataloader:
             if inputs.device != device:
@@ -98,15 +34,23 @@ class Evaluator:
                 targets = targets.to(device, non_blocking=True)
 
             outputs = model(inputs)
-            loss = criterion(outputs, targets) if criterion else None
+            bsz = int(targets.size(0))
+            if criterion is not None:
+                total_loss += float(criterion(outputs, targets).item()) * bsz
 
-            for metric in self.metrics.values():
-                metric.update(outputs, targets, loss)
+            preds = outputs.argmax(dim=1) if outputs.ndim > 1 else outputs
+            correct += int(preds.eq(targets).sum().item())
+            total += bsz
 
         if was_training:
             model.train()
 
-        return {name: metric.compute() for name, metric in self.metrics.items()}
+        results: Dict[str, float] = {
+            "accuracy": (correct / total) if total > 0 else 0.0,
+        }
+        if criterion is not None:
+            results["loss"] = (total_loss / total) if total > 0 else 0.0
+        return results
 
     @torch.no_grad()
     def evaluate_backdoor(
@@ -116,12 +60,11 @@ class Evaluator:
         criterion: Optional[nn.Module],
         device: torch.device,
     ) -> Dict[str, float]:
-        """
-        在带触发器的测试集上评估, 一次前向同时计算 targeted ASR 与 Backdoor Acc.
+        """Evaluate targeted ASR and backdoor accuracy in a single forward pass.
 
-        要求 dataloader 每批返回 (inputs, target_labels, original_labels).
-        - ASR: 非目标类样本加触发器后预测为目标类的比例 (分母排除原始标签等于目标类的样本).
-        - backdoor_acc: 预测等于原始真实标签的比例.
+        Expects each batch from ``dataloader`` to be ``(inputs, target_labels, original_labels)``:
+          - ``asr``: fraction of non-target samples classified as ``target_labels``.
+          - ``backdoor_acc``: fraction of triggered samples still classified as ``original_labels``.
         """
         was_training = model.training
         model.eval()
@@ -132,7 +75,6 @@ class Evaluator:
         backdoor_correct = 0
         total = 0
         total_loss = 0.0
-        loss_count = 0
 
         for inputs, target_labels, original_labels in dataloader:
             if inputs.device != device:
@@ -143,28 +85,24 @@ class Evaluator:
                 original_labels = original_labels.to(device, non_blocking=True)
 
             outputs = model(inputs)
+            bsz = int(original_labels.size(0))
             if criterion is not None:
-                loss = criterion(outputs, original_labels)
-                total_loss += loss.item() * original_labels.size(0)
-                loss_count += original_labels.size(0)
+                total_loss += float(criterion(outputs, original_labels).item()) * bsz
 
             preds = outputs.argmax(dim=1)
             non_target_mask = original_labels.ne(target_labels)
-            asr_total += non_target_mask.sum().item()
-            asr_correct += (preds.eq(target_labels) & non_target_mask).sum().item()
-            backdoor_correct += preds.eq(original_labels).sum().item()
-            total += target_labels.size(0)
+            asr_total += int(non_target_mask.sum().item())
+            asr_correct += int((preds.eq(target_labels) & non_target_mask).sum().item())
+            backdoor_correct += int(preds.eq(original_labels).sum().item())
+            total += bsz
 
         if was_training:
             model.train()
 
-        if total == 0:
-            out = {"asr": 0.0, "backdoor_acc": 0.0}
-        else:
-            out = {
-                "asr": asr_correct / asr_total if asr_total > 0 else 0.0,
-                "backdoor_acc": backdoor_correct / total,
-            }
-        if criterion is not None and loss_count > 0:
-            out["backdoor_loss"] = total_loss / loss_count
+        out: Dict[str, float] = {
+            "asr": (asr_correct / asr_total) if asr_total > 0 else 0.0,
+            "backdoor_acc": (backdoor_correct / total) if total > 0 else 0.0,
+        }
+        if criterion is not None and total > 0:
+            out["backdoor_loss"] = total_loss / total
         return out

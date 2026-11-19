@@ -1,110 +1,76 @@
-from dataclasses import dataclass, field, replace
+"""Configuration schema for SafeFL v2."""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
 import torch
 
+from core.types import TrainConfig
+
+
+def parse_train_config(raw: Optional[Dict[str, Any]]) -> TrainConfig:
+    """Parse ``client:`` YAML mapping directly into a flat ``TrainConfig``."""
+    if not raw:
+        return TrainConfig()
+
+    known = {
+        "epochs",
+        "batch_size",
+        "lr",
+        "optimizer",
+        "optimizer_name",
+        "momentum",
+        "weight_decay",
+        "criterion",
+        "criterion_name",
+        "grad_clip_norm",
+        "num_workers",  # ignored in v2 vectorized loader, excluded from extra
+        "extra",
+    }
+    extra = dict(raw.get("extra") or {})
+    for k, v in raw.items():
+        if k not in known:
+            extra[k] = v
+
+    return TrainConfig(
+        epochs=int(raw.get("epochs", 2)),
+        batch_size=int(raw.get("batch_size", 64)),
+        lr=float(raw.get("lr", 0.1)),
+        optimizer=str(raw.get("optimizer") or raw.get("optimizer_name") or "SGD"),
+        momentum=float(raw.get("momentum", 0.9)),
+        weight_decay=float(raw.get("weight_decay", 5e-4)),
+        criterion=str(raw.get("criterion") or raw.get("criterion_name") or "CrossEntropyLoss"),
+        grad_clip_norm=(
+            None if raw.get("grad_clip_norm") is None else float(raw["grad_clip_norm"])
+        ),
+        extra=extra,
+    )
+
 
 @dataclass
-class TrainerConfig:
-    """配置模型训练的参数"""
+class ComponentConfig:
+    """Generic ``{name, params}`` configuration for models, defenses, or partitioners."""
 
-    optimizer_name: str = "SGD"
-    lr: float = 0.1
-    momentum: float = 0.9
-    weight_decay: float = 5e-4
-    criterion_name: str = "CrossEntropyLoss"
-    epochs: int = 2
-    batch_size: int = 64
-    num_workers: int = 0
-    grad_clip_norm: Optional[float] = None
-    extra_params: Dict[str, Any] = field(default_factory=dict)
-
-    def build_optimizer(self, model: torch.nn.Module) -> torch.optim.Optimizer:
-        kwargs = {}
-        if self.optimizer_name == "SGD":
-            kwargs = {"lr": self.lr, "momentum": self.momentum, "weight_decay": self.weight_decay}
-        elif self.optimizer_name in {"Adam", "AdamW"}:
-            kwargs = {"lr": self.lr, "weight_decay": self.weight_decay}
-
-        kwargs.update(self.extra_params.get("optimizer_kwargs", {}))
-        optimizer_class = getattr(torch.optim, self.optimizer_name)
-        return optimizer_class(model.parameters(), **kwargs)
-
-    def build_criterion(self) -> torch.nn.Module:
-        kwargs = self.extra_params.get("criterion_kwargs", {})
-        criterion_class = getattr(torch.nn, self.criterion_name)
-        return criterion_class(**kwargs)
-
-
-@dataclass
-class ClientConfig:
-    """配置客户端运行的基础参数"""
-
-    num_workers: int = 0
-    batch_size: int = 64
-    trainer_config: TrainerConfig = field(default_factory=TrainerConfig)
+    name: str
+    params: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "ClientConfig":
-        known_trainer_keys = {
-            "lr",
-            "momentum",
-            "weight_decay",
-            "optimizer_name",
-            "criterion_name",
-            "epochs",
-            "batch_size",
-            "num_workers",
-            "grad_clip_norm",
-        }
-        trainer_kwargs = {k: config_dict[k] for k in known_trainer_keys if k in config_dict}
-        if "optimizer" in config_dict and "optimizer_name" not in trainer_kwargs:
-            trainer_kwargs["optimizer_name"] = config_dict["optimizer"]
-        if "criterion" in config_dict and "criterion_name" not in trainer_kwargs:
-            trainer_kwargs["criterion_name"] = config_dict["criterion"]
-
-        # 保留所有未列举的扩展参数到 extra_params, 不再静默丢弃
-        reserved = known_trainer_keys | {"optimizer", "criterion", "extra_params"}
-        extra = dict(config_dict.get("extra_params") or {})
-        for k, v in config_dict.items():
-            if k not in reserved:
-                extra[k] = v
-        trainer_kwargs["extra_params"] = extra
-
-        trainer_cfg = TrainerConfig(**trainer_kwargs)
-        client_kwargs: Dict[str, Any] = {"trainer_config": trainer_cfg}
-        for key in ["num_workers", "batch_size"]:
-            if key in config_dict:
-                client_kwargs[key] = config_dict[key]
-
-        return cls(**client_kwargs)
-
-    def to_train_config(
-        self,
-        *,
-        lr: Optional[float] = None,
-        epochs: Optional[int] = None,
-    ):
-        """生成 v2 扁平化的 ``TrainConfig`` 数据包."""
-        from core.types import TrainConfig
-
-        tc = self.trainer_config
-        return TrainConfig(
-            epochs=int(tc.epochs if epochs is None else epochs),
-            batch_size=int(self.batch_size),
-            lr=float(tc.lr if lr is None else lr),
-            optimizer=tc.optimizer_name,
-            momentum=float(tc.momentum),
-            weight_decay=float(tc.weight_decay),
-            criterion=tc.criterion_name,
-            grad_clip_norm=tc.grad_clip_norm,
-            extra=dict(tc.extra_params),
+    def from_dict(cls, raw: Optional[Dict[str, Any]], default_name: str) -> "ComponentConfig":
+        if not raw:
+            return cls(name=default_name)
+        return cls(
+            name=str(raw.get("name", default_name)),
+            params=dict(raw.get("params") or {}),
         )
+
+
+PartitionerConfig = ComponentConfig
 
 
 @dataclass
 class LRScheduleConfig:
-    """学习率调度配置 (warmup + cosine)"""
+    """Round-level learning-rate schedule configuration."""
 
     enabled: bool = False
     name: str = "warmup_cosine"
@@ -113,159 +79,149 @@ class LRScheduleConfig:
     warmup_start_lr: float = 0.0
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "LRScheduleConfig":
-        if not config_dict:
+    def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "LRScheduleConfig":
+        if not raw:
             return cls()
         return cls(
-            enabled=config_dict.get("enabled", False),
-            name=config_dict.get("name", "warmup_cosine"),
-            warmup_ratio=config_dict.get("warmup_ratio", 0.1),
-            min_lr=config_dict.get("min_lr", 0.0),
-            warmup_start_lr=config_dict.get("warmup_start_lr", 0.0),
+            enabled=bool(raw.get("enabled", False)),
+            name=str(raw.get("name", "warmup_cosine")),
+            warmup_ratio=float(raw.get("warmup_ratio", 0.1)),
+            min_lr=float(raw.get("min_lr", 0.0)),
+            warmup_start_lr=float(raw.get("warmup_start_lr", 0.0)),
         )
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "enabled": self.enabled,
-            "name": self.name,
-            "warmup_ratio": self.warmup_ratio,
-            "min_lr": self.min_lr,
-            "warmup_start_lr": self.warmup_start_lr,
-        }
 
 
 @dataclass
 class TrainingConfig:
-    """配置联邦学习训练流程的全局参数"""
+    """Global federated training loop parameters."""
 
     num_clients: int = 100
     rounds: int = 100
     clients_fraction: float = 0.1
-    seed: int = 42
     lr_schedule: LRScheduleConfig = field(default_factory=LRScheduleConfig)
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "TrainingConfig":
-        kwargs = {}
-        for key in ["num_clients", "rounds", "clients_fraction", "seed"]:
-            if key in config_dict:
-                kwargs[key] = config_dict[key]
-        if "lr_schedule" in config_dict:
-            kwargs["lr_schedule"] = LRScheduleConfig.from_dict(config_dict["lr_schedule"])
-        return cls(**kwargs)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "num_clients": self.num_clients,
-            "rounds": self.rounds,
-            "clients_fraction": self.clients_fraction,
-            "seed": self.seed,
-            "lr_schedule": self.lr_schedule.to_dict(),
-        }
+    def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "TrainingConfig":
+        if not raw:
+            return cls()
+        return cls(
+            num_clients=int(raw.get("num_clients", 100)),
+            rounds=int(raw.get("rounds", 100)),
+            clients_fraction=float(raw.get("clients_fraction", 0.1)),
+            lr_schedule=LRScheduleConfig.from_dict(raw.get("lr_schedule")),
+        )
 
 
 @dataclass
-class PartitionerConfig:
-    """配置数据划分器的参数"""
+class DataConfig:
+    """Data hub & partitioning configuration."""
 
-    name: str = "q_non_iid"
-    params: Dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def alpha(self) -> float:
-        return self.params.get("alpha", 1.0)
-
-    @property
-    def max_retries(self) -> int:
-        return self.params.get("max_retries", 100)
-
-    @property
-    def q(self) -> float:
-        return self.params.get("q", 0.5)
+    dataset: str = "cifar10"
+    root: str = "./data_source"
+    enable_proxy: bool = False
+    proxy_per_class: int = 10
+    use_augmentation: bool = False
+    preload_gpu: bool = False
+    partitioner: PartitionerConfig = field(
+        default_factory=lambda: ComponentConfig(name="q_non_iid")
+    )
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "PartitionerConfig":
-        if not config_dict:
+    def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "DataConfig":
+        if not raw:
             return cls()
-        return cls(name=config_dict.get("name", "q_non_iid"), params=config_dict.get("params", {}))
+        return cls(
+            dataset=str(raw.get("dataset", "cifar10")),
+            root=str(raw.get("root", "./data_source")),
+            enable_proxy=bool(raw.get("enable_proxy", False)),
+            proxy_per_class=int(raw.get("proxy_per_class", 10)),
+            use_augmentation=bool(raw.get("use_augmentation", False)),
+            preload_gpu=bool(raw.get("preload_gpu", False)),
+            partitioner=ComponentConfig.from_dict(raw.get("partitioner"), "q_non_iid"),
+        )
 
 
 @dataclass
 class AttackStrategyConfig:
-    """单个攻击策略的配置"""
+    """Single attacker strategy allocation."""
 
     name: str = "badnets"
     fraction: float = 1.0
+    poisoner: Optional[Dict[str, Any]] = None
     params: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "AttackStrategyConfig":
-        if not config_dict:
+    def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "AttackStrategyConfig":
+        if not raw:
             return cls()
         return cls(
-            name=config_dict.get("name", "badnets"),
-            fraction=config_dict.get("fraction", 1.0),
-            params=config_dict.get("params", {}),
+            name=str(raw.get("name", "badnets")),
+            fraction=float(raw.get("fraction", 1.0)),
+            poisoner=dict(raw["poisoner"]) if isinstance(raw.get("poisoner"), dict) else None,
+            params=dict(raw.get("params") or {}),
         )
 
 
 @dataclass
 class AttackConfig:
-    """攻击全局配置"""
+    """Global attack & ``AttackCoordinator`` scheduling configuration."""
 
     enabled: bool = False
     malicious_fraction: float = 0.1
     per_round_fraction: float = 0.1
+    sampling_mode: str = "fixed_quota"  # "fixed_quota" | "random"
+    start_round: int = 0
+    end_round: Optional[int] = None
+    attack_interval: int = 1
     malicious_epochs: Optional[int] = None
-    strategies: List[AttackStrategyConfig] = field(default_factory=lambda: [AttackStrategyConfig()])
+    strategies: List[AttackStrategyConfig] = field(
+        default_factory=lambda: [AttackStrategyConfig()]
+    )
 
     def __post_init__(self) -> None:
-        if self.enabled:
-            assert self.per_round_fraction <= self.malicious_fraction, (
-                "per_round_fraction 不能超过 malicious_fraction"
+        if self.sampling_mode not in {"fixed_quota", "random"}:
+            raise ValueError(
+                f"attack.sampling_mode must be 'fixed_quota' or 'random', got {self.sampling_mode!r}"
             )
-            total = sum(strategy.fraction for strategy in self.strategies)
-            assert abs(total - 1.0) < 1e-6, f"strategies 的 fraction 之和应为 1.0, 当前为 {total}"
+        if self.attack_interval <= 0:
+            raise ValueError(f"attack.attack_interval must be >= 1, got {self.attack_interval}")
+        if self.enabled:
+            if self.sampling_mode == "fixed_quota" and self.per_round_fraction > self.malicious_fraction:
+                raise ValueError("per_round_fraction cannot exceed malicious_fraction")
+            total = sum(s.fraction for s in self.strategies)
+            if abs(total - 1.0) >= 1e-6:
+                raise ValueError(f"attack.strategies fractions must sum to 1.0, got {total}")
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "AttackConfig":
-        if not config_dict:
+    def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "AttackConfig":
+        if not raw:
             return cls()
-        strategies_raw = config_dict.get("strategies", [])
+        strategies_raw = raw.get("strategies") or []
         strategies = [
-            AttackStrategyConfig.from_dict(strategy) if isinstance(strategy, dict) else strategy
-            for strategy in strategies_raw
-        ]
-        if not strategies:
-            strategies = [AttackStrategyConfig()]
-        malicious_epochs = config_dict.get("malicious_epochs")
-        if malicious_epochs is not None:
-            malicious_epochs = int(malicious_epochs)
+            AttackStrategyConfig.from_dict(s) if isinstance(s, dict) else s
+            for s in strategies_raw
+        ] or [AttackStrategyConfig()]
+
+        mal_ep = raw.get("malicious_epochs")
+        end_rd = raw.get("end_round")
         return cls(
-            enabled=config_dict.get("enabled", False),
-            malicious_fraction=config_dict.get("malicious_fraction", 0.1),
-            per_round_fraction=config_dict.get("per_round_fraction", 0.1),
-            malicious_epochs=malicious_epochs,
+            enabled=bool(raw.get("enabled", False)),
+            malicious_fraction=float(raw.get("malicious_fraction", 0.1)),
+            per_round_fraction=float(raw.get("per_round_fraction", 0.1)),
+            sampling_mode=str(raw.get("sampling_mode", "fixed_quota")),
+            start_round=int(raw.get("start_round", 0)),
+            end_round=None if end_rd is None else int(end_rd),
+            attack_interval=int(raw.get("attack_interval", 1)),
+            malicious_epochs=None if mal_ep is None else int(mal_ep),
             strategies=strategies,
         )
 
 
-def apply_malicious_epochs_override(
-    client_config: ClientConfig, malicious_epochs: Optional[int]
-) -> ClientConfig:
-    if malicious_epochs is None:
-        return client_config
-    return replace(
-        client_config,
-        trainer_config=replace(client_config.trainer_config, epochs=int(malicious_epochs)),
-    )
-
-
 @dataclass
 class LoggerConfig:
-    """配置 Logger 的参数"""
+    """Experiment logging configuration."""
 
-    project: str = "FL_Project"
+    project: str = "SafeFL"
     name: str = "experiment"
     log_root: str = "./logs"
     log_level: str = "INFO"
@@ -276,224 +232,96 @@ class LoggerConfig:
     save_interval: int = 10
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "LoggerConfig":
-        if not config_dict:
-            return cls()
-        logging_section = config_dict.get("logging")
-        d = logging_section if isinstance(logging_section, dict) else config_dict
-        kwargs = {}
-        for key in [
-            "project",
-            "name",
-            "log_root",
-            "log_level",
-            "use_wandb",
-            "use_tensorboard",
-            "use_csv",
-            "console_metrics",
-            "save_interval",
-        ]:
-            if key in d:
-                kwargs[key] = d[key]
-        if "log_dir" in d and "log_root" not in kwargs:
-            kwargs["log_root"] = d["log_dir"]
-        if "name" not in kwargs and "experiment_name" in config_dict:
-            kwargs["name"] = config_dict["experiment_name"]
-        return cls(**kwargs)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "project": self.project,
-            "name": self.name,
-            "log_root": self.log_root,
-            "log_level": self.log_level,
-            "use_wandb": self.use_wandb,
-            "use_tensorboard": self.use_tensorboard,
-            "use_csv": self.use_csv,
-            "console_metrics": self.console_metrics,
-        }
-
-    def to_logging_section(self) -> Dict[str, Any]:
-        d = self.to_dict()
-        d["save_interval"] = self.save_interval
-        return d
-
-
-@dataclass
-class DataConfig:
-    """配置数据层的参数 (v2)"""
-
-    dataset: str = "cifar10"
-    root: str = "./data_source"
-    enable_proxy: bool = False
-    proxy_per_class: int = 10
-    use_augmentation: bool = False
-    preload_gpu: bool = False
-    partitioner: PartitionerConfig = field(default_factory=PartitionerConfig)
-
-    @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "DataConfig":
-        kwargs = {}
-        for key in [
-            "dataset",
-            "root",
-            "enable_proxy",
-            "proxy_per_class",
-            "use_augmentation",
-            "preload_gpu",
-        ]:
-            if key in config_dict:
-                kwargs[key] = config_dict[key]
-
-        if "partitioner" in config_dict:
-            kwargs["partitioner"] = PartitionerConfig.from_dict(config_dict["partitioner"])
-
-        return cls(**kwargs)
+    def from_dict(cls, raw: Optional[Dict[str, Any]], fallback_name: str = "experiment") -> "LoggerConfig":
+        if not raw:
+            return cls(name=fallback_name)
+        return cls(
+            project=str(raw.get("project", "SafeFL")),
+            name=str(raw.get("name", fallback_name)),
+            log_root=str(raw.get("log_root", raw.get("log_dir", "./logs"))),
+            log_level=str(raw.get("log_level", "INFO")),
+            use_wandb=bool(raw.get("use_wandb", False)),
+            use_tensorboard=bool(raw.get("use_tensorboard", False)),
+            use_csv=bool(raw.get("use_csv", False)),
+            console_metrics=bool(raw.get("console_metrics", False)),
+            save_interval=int(raw.get("save_interval", 10)),
+        )
 
 
 @dataclass
 class ParallelConfig:
-    """客户端本地训练并行配置 (Ray / 串行)."""
+    """Execution backend configuration (``local`` in-process or ``ray`` actor pool)."""
 
     backend: str = "ray"
     gpu_ids: List[int] = field(default_factory=list)
-    actors_per_gpu: int = 20
+    actors_per_gpu: int = 10
 
     def __post_init__(self) -> None:
-        self.backend = str(self.backend).lower().strip()
-        if self.backend not in {"ray", "sequential"}:
-            raise ValueError(f"parallel.backend 必须是 ray 或 sequential, 当前为 {self.backend}")
+        b = str(self.backend).lower().strip()
+        if b == "sequential":
+            b = "local"
+        if b not in {"local", "ray"}:
+            raise ValueError(f"parallel.backend must be 'local' or 'ray', got {self.backend!r}")
+        self.backend = b
         self.actors_per_gpu = max(1, int(self.actors_per_gpu))
         self.gpu_ids = [int(x) for x in self.gpu_ids]
 
     @classmethod
-    def from_dict(cls, config_dict: Optional[Dict[str, Any]]) -> "ParallelConfig":
-        if not config_dict:
+    def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "ParallelConfig":
+        if not raw:
             return cls()
-        gpu_ids = config_dict.get("gpu_ids", []) or []
         return cls(
-            backend=config_dict.get("backend", "ray"),
-            gpu_ids=list(gpu_ids),
-            actors_per_gpu=int(config_dict.get("actors_per_gpu", 20)),
+            backend=str(raw.get("backend", "ray")),
+            gpu_ids=list(raw.get("gpu_ids") or []),
+            actors_per_gpu=int(raw.get("actors_per_gpu", 10)),
         )
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "backend": self.backend,
-            "gpu_ids": list(self.gpu_ids),
-            "actors_per_gpu": self.actors_per_gpu,
-        }
 
 
 @dataclass
 class GlobalConfig:
-    """全局配置聚合类"""
+    """Root experiment configuration for SafeFL v2."""
 
-    experiment_name: str = "fedavg_cifar10_demo"
+    experiment_name: str = "fedavg_cifar10"
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 42
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
-    client: ClientConfig = field(default_factory=ClientConfig)
-    model: Dict[str, Any] = field(
-        default_factory=lambda: {"name": "resnet18", "params": {"num_classes": 10, "input_channels": 3}}
+    client: TrainConfig = field(default_factory=TrainConfig)
+    model: ComponentConfig = field(
+        default_factory=lambda: ComponentConfig(
+            name="resnet18", params={"num_classes": 10, "input_channels": 3}
+        )
     )
-    algorithm: Dict[str, Any] = field(default_factory=lambda: {"name": "fedavg", "params": {}})
+    defense: ComponentConfig = field(
+        default_factory=lambda: ComponentConfig(name="fedavg")
+    )
+    attack: AttackConfig = field(default_factory=AttackConfig)
     logger_config: LoggerConfig = field(default_factory=LoggerConfig)
-    attack: AttackConfig = field(default_factory=lambda: AttackConfig(enabled=False))
     parallel: ParallelConfig = field(default_factory=ParallelConfig)
 
-    def __post_init__(self) -> None:
-        self._sync_seed()
-
-    def _sync_seed(self) -> None:
-        self.training.seed = self.seed
-
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "GlobalConfig":
-        instance = cls()
+    def from_dict(cls, raw: Dict[str, Any]) -> "GlobalConfig":
+        exp_name = str(raw.get("experiment_name", "fedavg_cifar10"))
+        defense_raw = raw.get("defense") or raw.get("algorithm")
+        logging_raw = raw.get("logging") if isinstance(raw.get("logging"), dict) else None
 
-        if "data" in config_dict:
-            instance.data = DataConfig.from_dict(config_dict["data"])
-        if "training" in config_dict:
-            instance.training = TrainingConfig.from_dict(config_dict["training"])
-        if "client" in config_dict:
-            instance.client = ClientConfig.from_dict(config_dict["client"])
-        if "model" in config_dict:
-            instance.model.update(config_dict["model"])
-        if "algorithm" in config_dict:
-            instance.algorithm.update(config_dict["algorithm"])
-        if "logging" in config_dict or any(
-            key in config_dict for key in ["use_wandb", "log_dir", "log_root", "log_level"]
-        ):
-            instance.logger_config = LoggerConfig.from_dict(config_dict)
-        if "attack" in config_dict:
-            instance.attack = AttackConfig.from_dict(config_dict["attack"])
-        if "parallel" in config_dict:
-            instance.parallel = ParallelConfig.from_dict(config_dict["parallel"])
+        data_cfg = DataConfig.from_dict(raw.get("data"))
+        if "dataset" in raw and "data" not in raw:
+            data_cfg.dataset = str(raw["dataset"])
 
-        for key, value in config_dict.items():
-            if key in ["experiment_name", "device", "seed"]:
-                setattr(instance, key, value)
-            if key == "lr":
-                instance.client.trainer_config.lr = value
-            if key == "epochs":
-                instance.client.trainer_config.epochs = value
-            if key == "batch_size":
-                instance.client.batch_size = value
-                instance.client.trainer_config.batch_size = value
-            if key == "rounds":
-                instance.training.rounds = value
-            if key == "dataset":
-                instance.data.dataset = value
-            if key == "num_clients":
-                instance.training.num_clients = value
-            if key == "experiment_name":
-                instance.logger_config.name = value
-
-        instance._sync_seed()
-        return instance
+        return cls(
+            experiment_name=exp_name,
+            device=str(raw.get("device", "cuda" if torch.cuda.is_available() else "cpu")),
+            seed=int(raw.get("seed", 42)),
+            data=data_cfg,
+            training=TrainingConfig.from_dict(raw.get("training")),
+            client=parse_train_config(raw.get("client")),
+            model=ComponentConfig.from_dict(raw.get("model"), "resnet18"),
+            defense=ComponentConfig.from_dict(defense_raw, "fedavg"),
+            attack=AttackConfig.from_dict(raw.get("attack")),
+            logger_config=LoggerConfig.from_dict(logging_raw, fallback_name=exp_name),
+            parallel=ParallelConfig.from_dict(raw.get("parallel")),
+        )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "experiment_name": self.experiment_name,
-            "device": self.device,
-            "seed": self.seed,
-            "data": {
-                "dataset": self.data.dataset,
-                "root": self.data.root,
-                "num_clients": self.training.num_clients,
-                "enable_proxy": self.data.enable_proxy,
-                "proxy_per_class": self.data.proxy_per_class,
-                "use_augmentation": self.data.use_augmentation,
-                "preload_gpu": self.data.preload_gpu,
-                "partitioner": {"name": self.data.partitioner.name, "params": self.data.partitioner.params},
-            },
-            "training": self.training.to_dict(),
-            "client": {
-                "lr": self.client.trainer_config.lr,
-                "momentum": self.client.trainer_config.momentum,
-                "weight_decay": self.client.trainer_config.weight_decay,
-                "epochs": self.client.trainer_config.epochs,
-                "batch_size": self.client.batch_size,
-                "num_workers": self.client.num_workers,
-            },
-            "model": self.model,
-            "algorithm": self.algorithm,
-            "logging": self.logger_config.to_logging_section(),
-            "attack": {
-                "enabled": self.attack.enabled,
-                "malicious_fraction": self.attack.malicious_fraction,
-                "per_round_fraction": self.attack.per_round_fraction,
-                "malicious_epochs": self.attack.malicious_epochs,
-                "strategies": [
-                    {"name": strategy.name, "fraction": strategy.fraction, "params": strategy.params}
-                    for strategy in self.attack.strategies
-                ],
-            },
-            "parallel": self.parallel.to_dict(),
-        }
-
-    @property
-    def training_config(self) -> TrainingConfig:
-        return self.training
+        return asdict(self)

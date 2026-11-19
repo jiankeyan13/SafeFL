@@ -8,12 +8,9 @@ from typing import Any, Iterator, Optional, Protocol, Sequence, Tuple, Union, ru
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, Subset
 
-from data.source import CustomDatasetSource, SharedDataSource
+from data.source import SharedDataSource
 from data.spec import AugmentSpec
-
-AnySource = Union[SharedDataSource, CustomDatasetSource]
 
 
 def derive_stable_seed(base_seed: int, *parts: Any) -> int:
@@ -71,7 +68,7 @@ def apply_batch_augment(
     generator: Optional[torch.Generator] = None,
 ) -> torch.Tensor:
     """Apply independent per-sample random flip and random crop on ``[B, C, H, W]``."""
-    if bx.ndim != 4 or not spec.enabled or bx.shape[0] == 0:
+    if not spec.enabled or bx.shape[0] == 0:
         return bx
 
     b, c, h, w = bx.shape
@@ -94,27 +91,6 @@ def apply_batch_augment(
         bx = padded[b_idx, c_idx, r_idx, w_idx].contiguous()
 
     return bx
-
-
-class _TorchViewDataset(Dataset):
-    """Standard PyTorch ``Dataset`` adapter over a ``DataView`` (for interoperability)."""
-
-    def __init__(self, view: "DataView", *, normalize: bool = True) -> None:
-        self.view = view
-        self.normalize = normalize
-
-    def __len__(self) -> int:
-        return len(self.view)
-
-    def __getitem__(self, index: int) -> Tuple[Any, int]:
-        global_idx = int(self.view.indices[index])
-        src = self.view.source
-        if isinstance(src, SharedDataSource):
-            bx, by = src.fetch_batch(np.asarray([global_idx], dtype=np.int32))
-            if self.normalize:
-                src.normalize_(bx)
-            return bx.squeeze(0), int(by[0].item())
-        return src.dataset[global_idx]
 
 
 class FastBatchLoader:
@@ -191,11 +167,6 @@ class FastBatchLoader:
                 )
 
     @property
-    def dataset(self) -> "DataView":
-        """Compatibility alias matching ``torch.utils.data.DataLoader.dataset``."""
-        return self.view
-
-    @property
     def num_samples(self) -> int:
         return len(self.view)
 
@@ -215,53 +186,7 @@ class FastBatchLoader:
         self._aug_step += 1
         return gen
 
-    def _iter_custom_source(self) -> Iterator[Any]:
-        assert isinstance(self.view.source, CustomDatasetSource)
-        n = len(self.view)
-        if n == 0:
-            return
-        pos_order = self._rng.permutation(n) if self.shuffle else np.arange(n, dtype=np.int64)
-        subset = Subset(self.view.source.dataset, self.view.indices[pos_order].tolist())
-        loader = DataLoader(
-            subset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            drop_last=self.drop_last,
-        )
-        dev = self.device
-        cursor = 0
-        for bx, by in loader:
-            bsz = int(by.shape[0]) if torch.is_tensor(by) else len(by)
-            pos = pos_order[cursor : cursor + bsz]
-            cursor += bsz
-            if dev is not None:
-                if torch.is_tensor(bx):
-                    bx = bx.to(dev, non_blocking=True)
-                if torch.is_tensor(by):
-                    by = by.to(dev, non_blocking=True)
-            if self.poisoner is not None and torch.is_tensor(bx) and torch.is_tensor(by):
-                if self.mode == "train":
-                    assert self._poison_mask is not None
-                    mask_t = torch.as_tensor(
-                        self._poison_mask[pos], dtype=torch.bool, device=bx.device
-                    )
-                    bx, by = self.poisoner.apply_train_batch(
-                        bx, by, mask_t, client_id=self.view.client_id, round_idx=self.round_idx
-                    )
-                else:
-                    bx, target_y, orig_y = self.poisoner.apply_eval_batch(
-                        bx, by, round_idx=self.round_idx
-                    )
-                    yield (bx, target_y, orig_y) if self.return_orig_label else (bx, target_y)
-                    continue
-            yield bx, by
-
     def __iter__(self) -> Iterator[Any]:
-        if not self.view.source.is_tensor_source:
-            yield from self._iter_custom_source()
-            return
-
-        assert isinstance(self.view.source, SharedDataSource)
         src = self.view.source
         n = len(self.view)
         if n == 0:
@@ -322,7 +247,7 @@ class FastBatchLoader:
 
 
 class DataView:
-    """Zero-copy index slice over a ``SharedDataSource`` (or ``CustomDatasetSource``).
+    """Zero-copy index slice over a ``SharedDataSource``.
 
     Provides 1-line splitting and microsecond ``FastBatchLoader`` assembly for
     benign clients, complex multi-branch attackers, and server evaluators.
@@ -330,7 +255,7 @@ class DataView:
 
     def __init__(
         self,
-        source: AnySource,
+        source: SharedDataSource,
         indices: Optional[Sequence[int] | np.ndarray] = None,
         *,
         client_id: Optional[int] = None,
@@ -427,7 +352,3 @@ class DataView:
             round_idx=round_idx,
             seed=seed,
         )
-
-    def as_torch_dataset(self, *, normalize: bool = True) -> Dataset:
-        """Expose this view as a standard ``torch.utils.data.Dataset`` if needed."""
-        return _TorchViewDataset(self, normalize=normalize)

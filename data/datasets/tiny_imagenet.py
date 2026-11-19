@@ -130,10 +130,6 @@ def _ensure_tiny_imagenet_on_disk(data_root: str) -> None:
     if os.environ.get("SAFEFL_SKIP_TINY_IMAGENET_DOWNLOAD", "").lower() in ("1", "true", "yes"):
         return
 
-    sub = os.path.join(data_root, "tiny-imagenet-200")
-    if _tiny_present(sub) or _tiny_present(data_root):
-        return
-
     os.makedirs(data_root, exist_ok=True)
     zip_path = os.path.join(data_root, TINY_IMAGENET_ZIP_NAME)
     if os.path.isfile(zip_path) and not _zip_looks_usable(zip_path):
@@ -143,33 +139,22 @@ def _ensure_tiny_imagenet_on_disk(data_root: str) -> None:
         _download_tiny_imagenet_zip(zip_path)
 
     print(f"Extracting {zip_path} -> {data_root}")
-    try:
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(data_root)
-    except zipfile.BadZipFile as e:
-        os.remove(zip_path)
-        raise RuntimeError(f"Corrupted zip deleted: {zip_path}. Re-run or replace manually.") from e
-    if not _tiny_present(sub):
-        raise RuntimeError(f"wnids.txt missing after extracting into {sub}.")
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zf.extractall(data_root)
 
 
 def _resolve_tiny_root(root: str) -> str:
     sub = os.path.join(root, "tiny-imagenet-200")
-    if os.path.isdir(sub) and _tiny_present(sub):
+    if _tiny_present(sub):
         return sub
     if _tiny_present(root):
         return root
 
     _ensure_tiny_imagenet_on_disk(os.path.abspath(root))
 
-    if os.path.isdir(sub) and _tiny_present(sub):
+    if _tiny_present(sub):
         return sub
-    if _tiny_present(root):
-        return root
-
-    raise FileNotFoundError(
-        f"Tiny ImageNet not found under {os.path.abspath(root)}."
-    )
+    raise FileNotFoundError(f"Tiny ImageNet not found under {os.path.abspath(root)}.")
 
 
 class _TinyImageNetSource(Dataset):
@@ -187,8 +172,6 @@ class _TinyImageNetSource(Dataset):
             train_dir = os.path.join(tiny_root, "train")
             for wnid in wnids:
                 img_dir = os.path.join(train_dir, wnid, "images")
-                if not os.path.isdir(img_dir):
-                    continue
                 for fn in sorted(os.listdir(img_dir)):
                     if fn.lower().endswith((".jpeg", ".jpg")):
                         self.paths.append(os.path.join(img_dir, fn))
@@ -198,10 +181,11 @@ class _TinyImageNetSource(Dataset):
             ann_path = os.path.join(tiny_root, "val", "val_annotations.txt")
             with open(ann_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    parts = line.strip().split("\t")
-                    if len(parts) >= 2:
-                        self.paths.append(os.path.join(val_img_dir, parts[0]))
-                        targets.append(wnid_to_idx[parts[1]])
+                    if not line.strip():
+                        continue
+                    img_name, wnid = line.strip().split("\t")[:2]
+                    self.paths.append(os.path.join(val_img_dir, img_name))
+                    targets.append(wnid_to_idx[wnid])
 
         self.targets = np.asarray(targets, dtype=np.int64)
 

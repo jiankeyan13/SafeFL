@@ -165,7 +165,7 @@ class PatchPoisoner(BasePoisoner):
         round_idx: Optional[int] = None,
     ) -> torch.Tensor:
         del client_id, round_idx
-        return self.trigger(bx, mask=mask, inplace=True)
+        return self.trigger(bx, mask=mask)
 
     def _stamp_eval(
         self,
@@ -174,7 +174,7 @@ class PatchPoisoner(BasePoisoner):
         round_idx: Optional[int] = None,
     ) -> torch.Tensor:
         del round_idx
-        return self.trigger(bx, mask=None, inplace=True)
+        return self.trigger(bx, mask=None)
 
 
 @POISONER_REGISTRY.register("dba")
@@ -245,7 +245,7 @@ class DBAPoisoner(BasePoisoner):
     ) -> torch.Tensor:
         del round_idx
         bid = self._resolve_block_id(client_id)
-        return self._block_triggers[bid](bx, mask=mask, inplace=True)
+        return self._block_triggers[bid](bx, mask=mask)
 
     def _stamp_eval(
         self,
@@ -254,7 +254,7 @@ class DBAPoisoner(BasePoisoner):
         round_idx: Optional[int] = None,
     ) -> torch.Tensor:
         del round_idx
-        return self.eval_trigger(bx, mask=None, inplace=True)
+        return self.eval_trigger(bx, mask=None)
 
 
 @POISONER_REGISTRY.register("blend")
@@ -288,7 +288,7 @@ class BlendPoisoner(BasePoisoner):
         round_idx: Optional[int] = None,
     ) -> torch.Tensor:
         del client_id, round_idx
-        return self.trigger(bx, mask=mask, inplace=True)
+        return self.trigger(bx, mask=mask)
 
     def _stamp_eval(
         self,
@@ -297,7 +297,7 @@ class BlendPoisoner(BasePoisoner):
         round_idx: Optional[int] = None,
     ) -> torch.Tensor:
         del round_idx
-        return self.trigger(bx, mask=None, inplace=True)
+        return self.trigger(bx, mask=None)
 
 
 def build_poisoner(name: str = "patch", **params: Any) -> BasePoisoner:
