@@ -1,17 +1,44 @@
-"""
-攻击模块。提供 build_attack 工厂函数及各类攻击实现。
-"""
-from core.attack.factory import build_attack
-# 导入具体的攻击实现以触发注册
-from core.attack.data import badnets
-from core.attack.data import badnets_dual  # noqa: F401
-from core.attack.data import dba  # noqa: F401
-from core.attack.upload import batman  # noqa: F401
-from core.attack.upload import lp  # noqa: F401
-from core.attack.training import chameleon  # noqa: F401
-from core.attack.training import lga  # noqa: F401
-from core.attack.training import neurotoxin  # noqa: F401
-from core.attack.training import pgd  # noqa: F401
-from core.attack.training import sparalignfl  # noqa: F401
+"""SafeFL v2 client-side backdoor attack package (1 attack = 1 file)."""
+from __future__ import annotations
 
-__all__ = ["build_attack"]
+from core.attack import (
+    badnets_dual,
+    batman,
+    chameleon,
+    lga,
+    lp,
+    neurotoxin,
+    pgd,
+    sparalignfl,
+)
+from core.attack.base import (
+    BadNetsAttack,
+    BaseAttacker,
+    BlendAttack,
+    DBAAttack,
+    build_attacker,
+)
+from core.attack.coordinator import (
+    AttackCoordinator,
+    ParticipantTask,
+    instantiate_task_attacker,
+)
+
+__all__ = [
+    "AttackCoordinator",
+    "BadNetsAttack",
+    "BaseAttacker",
+    "BlendAttack",
+    "DBAAttack",
+    "ParticipantTask",
+    "badnets_dual",
+    "batman",
+    "build_attacker",
+    "chameleon",
+    "instantiate_task_attacker",
+    "lga",
+    "lp",
+    "neurotoxin",
+    "pgd",
+    "sparalignfl",
+]
