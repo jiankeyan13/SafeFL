@@ -8,7 +8,6 @@ import torch
 import torch.nn as nn
 
 from core.defense import BaseDefense, FedAvgDefense
-from core.defense import functional as F
 from core.types import (
     ClientUpdate,
     ServerBroadcast,
@@ -17,6 +16,7 @@ from core.types import (
     apply_update_to_model,
     split_model_state,
 )
+from core.utils import functional as F
 
 
 class Server:

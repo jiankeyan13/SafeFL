@@ -8,9 +8,9 @@ import torch.nn as nn
 from scipy.spatial.distance import cdist
 from sklearn.utils.extmath import randomized_svd
 
-from core.defense import functional as F
 from core.defense.base import BaseDefense
 from core.types import ClientUpdate, DefenseOutput, ServerContext
+from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
 
 

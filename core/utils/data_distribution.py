@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from core.attack.data.poisoner import PatchPoisoner
+from core.attack.poisoner import PatchPoisoner
 from data.hub import DataHub
 
 # 常见数据集的类别名, 便于读图; 未知数据集回退为数字标签.

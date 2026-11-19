@@ -9,6 +9,7 @@ from core.attack import (
     lp,
     neurotoxin,
     pgd,
+    poisoner,
     sparalignfl,
 )
 from core.attack.base import (
@@ -18,27 +19,34 @@ from core.attack.base import (
     DBAAttack,
     build_attacker,
 )
-from core.attack.coordinator import (
-    AttackCoordinator,
-    ParticipantTask,
-    instantiate_task_attacker,
+from core.attack.poisoner import (
+    POISONER_REGISTRY,
+    BasePoisoner,
+    BlendPoisoner,
+    DBAPoisoner,
+    PatchPoisoner,
+    build_poisoner,
 )
 
 __all__ = [
-    "AttackCoordinator",
     "BadNetsAttack",
     "BaseAttacker",
+    "BasePoisoner",
     "BlendAttack",
+    "BlendPoisoner",
     "DBAAttack",
-    "ParticipantTask",
+    "DBAPoisoner",
+    "POISONER_REGISTRY",
+    "PatchPoisoner",
     "badnets_dual",
     "batman",
     "build_attacker",
+    "build_poisoner",
     "chameleon",
-    "instantiate_task_attacker",
     "lga",
     "lp",
     "neurotoxin",
     "pgd",
+    "poisoner",
     "sparalignfl",
 ]

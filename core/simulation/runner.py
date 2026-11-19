@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import torch
 
-from core.attack.coordinator import AttackCoordinator
 from core.defense import build_defense
+from core.simulation.coordinator import AttackCoordinator
 from core.simulation.executor import BaseExecutor, create_executor
 from core.simulation.server import Server
 from core.types import ClientUpdate, ServerContext

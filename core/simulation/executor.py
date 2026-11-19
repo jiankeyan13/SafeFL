@@ -8,8 +8,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 
-from core.attack.coordinator import ParticipantTask, instantiate_task_attacker
+from core.attack.base import build_attacker
 from core.simulation.client import BenignClient
+from core.simulation.coordinator import ParticipantTask
 from core.types import (
     ClientContext,
     ClientUpdate,
@@ -128,12 +129,19 @@ class ClientWorker:
                 train_cfg=task.train_cfg,
                 broadcast=dev_broadcast,
                 seed=self.seed,
+                attacker_rank=task.attacker_rank,
                 state=task.state,
                 run_dir=self.run_dir,
             )
 
             if task.is_malicious:
-                attacker = instantiate_task_attacker(task, seed=self.seed)
+                if task.strategy is None:
+                    raise ValueError(f"Malicious task for client {task.client_id} missing strategy.")
+                attacker = build_attacker(
+                    task.strategy,
+                    seed=self.seed,
+                    attacker_rank=task.attacker_rank,
+                )
                 update = attacker.step(ctx)
                 next_state: Optional[Dict[str, Any]] = (
                     (to_cpu_tree(ctx.state) if export_cpu else ctx.state)

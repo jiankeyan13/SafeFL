@@ -6,8 +6,8 @@ from typing import Any, List
 
 import torch.nn as nn
 
-from core.defense import functional as F
 from core.types import ClientUpdate, DefenseOutput, ServerContext
+from core.utils import functional as F
 from core.utils.config import ComponentConfig
 from core.utils.registry import DEFENSE_REGISTRY
 

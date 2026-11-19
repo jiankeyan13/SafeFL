@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from core.simulation.client import BenignClient
+from core.simulation.coordinator import AttackCoordinator, ParticipantTask
 from core.simulation.executor import (
     BaseExecutor,
     ClientWorker,
@@ -13,12 +14,14 @@ from core.simulation.runner import Runner
 from core.simulation.server import Server
 
 __all__ = [
-    "BenignClient",
-    "Server",
-    "ClientWorker",
+    "AttackCoordinator",
     "BaseExecutor",
+    "BenignClient",
+    "ClientWorker",
     "LocalExecutor",
+    "ParticipantTask",
     "RayExecutor",
-    "create_executor",
     "Runner",
+    "Server",
+    "create_executor",
 ]

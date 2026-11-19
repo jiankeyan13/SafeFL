@@ -11,9 +11,9 @@ import torch.nn as nn
 import torch.nn.functional as tF
 from torch.func import functional_call, vmap
 
-from core.defense import functional as F
 from core.defense.base import BaseDefense
 from core.types import ClientUpdate, DefenseOutput, ServerContext, split_model_state
+from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
 
 

@@ -8,9 +8,9 @@ import numpy as np
 import torch.nn as nn
 from scipy.fft import dctn
 
-from core.defense import functional as F
 from core.defense.base import BaseDefense
 from core.types import ClientUpdate, DefenseOutput, ServerContext, StateDict
+from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
 
 

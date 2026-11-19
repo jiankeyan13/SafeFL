@@ -1,9 +1,4 @@
-"""Pure functional operators shared across server-side defenses in SafeFL v2.
-
-Because ``ClientUpdate`` already separates learnable ``param_delta`` from BatchNorm
-``buffers``, every operator here works directly on clean parameter dicts without
-ad-hoc key-filtering heuristics.
-"""
+"""Stateless tensor, StateDict, flat-matrix, and BN operators shared across SafeFL v2."""
 from __future__ import annotations
 
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
@@ -232,6 +227,26 @@ def average_buffers(
             else raw_w
         )
     return weighted_average_dicts(buf_list, eff_w, device=device)
+
+
+def median_buffers(
+    updates: Sequence[ClientUpdate],
+    device: torch.device,
+) -> Optional[StateDict]:
+    """Compute coordinate-wise median over BatchNorm ``buffers`` across ``updates``."""
+    buf_list = [u.buffers for u in updates if u.buffers]
+    if not buf_list:
+        return None
+    out: StateDict = {}
+    for k, ref in buf_list[0].items():
+        stacked = torch.stack([b[k].to(device=device, dtype=torch.float32) for b in buf_list], dim=0)
+        med = torch.median(stacked, dim=0).values
+        out[k] = (
+            med.to(dtype=ref.dtype)
+            if torch.is_floating_point(ref)
+            else torch.round(med).to(dtype=ref.dtype)
+        )
+    return out
 
 
 def clip_and_average_flat(

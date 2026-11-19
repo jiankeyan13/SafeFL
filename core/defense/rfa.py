@@ -6,10 +6,9 @@ from typing import Any, List
 import torch
 import torch.nn as nn
 
-from core.defense import functional as F
 from core.defense.base import BaseDefense
-from core.defense.trim_mean import _coordinate_median_buffers
 from core.types import ClientUpdate, DefenseOutput, ServerContext
+from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
 
 
@@ -33,7 +32,7 @@ class RFADefense(BaseDefense):
         ctx: ServerContext,
     ) -> DefenseOutput:
         del global_model
-        mat, keys = F.stack_flat_deltas(updates, device=ctx.device)  # [N, D]
+        mat, keys = F.stack_flat_deltas(updates, device=ctx.device)
         alpha = torch.tensor(
             [float(max(u.num_samples, 1)) for u in updates],
             dtype=torch.float32,
@@ -47,5 +46,4 @@ class RFADefense(BaseDefense):
             y = (mat * beta.unsqueeze(1)).sum(dim=0) / beta.sum().clamp_min(1e-12)
 
         param_delta = F.unflatten_delta(y, updates[0].param_delta, keys)
-        buffers = _coordinate_median_buffers(updates, ctx.device)
-        return DefenseOutput(param_delta=param_delta, buffers=buffers)
+        return DefenseOutput(param_delta=param_delta, buffers=F.median_buffers(updates, ctx.device))

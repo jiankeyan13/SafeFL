@@ -12,10 +12,10 @@ SafeFL/
 ├── models/                      # 模型注册 (ResNet18 / ResNet34 / FashionMNISTCNN)
 └── core/
     ├── types.py                 # 跨层通信三数据盒 (ServerBroadcast / ClientContext / ClientUpdate)
-    ├── attack/                  # 1 算法 = 1 文件 (BaseAttacker + 11 种攻击 + AttackCoordinator + Poisoner)
-    ├── defense/                 # 1 算法 = 1 文件 (BaseDefense + 14 种防御 + functional.py 数学算子库)
-    ├── simulation/              # 联邦系统角色与同构执行层 (BenignClient / Server / ClientWorker / Runner)
-    └── utils/                   # 基础设施 (config / registry / trainer / evaluator / logger / lr_schedule)
+    ├── attack/                  # 1 算法 = 1 文件 (base.py + poisoner.py + 11 种单文件攻击，无子文件夹)
+    ├── defense/                 # 1 算法 = 1 文件 (base.py + 14 种单文件防御，无子文件夹)
+    ├── simulation/              # 联邦系统角色与调度执行 (client / server / coordinator / executor / runner)
+    └── utils/                   # 通用底座 (functional / trainer / evaluator / config / registry / logger / lr_schedule)
 ```
 
 ## 快速运行
@@ -58,15 +58,15 @@ class MyAttack(BaseAttacker):
 ```
 
 ### 2. 新增服务端防御 (`core/defense/<my_defense>.py`)
-所有客户端上传更新均已物理分离可训练 `param_delta` 与 BN `buffers`，可直接组合 `core.defense.functional` 中的向量化算子：
+所有客户端上传更新均已物理分离可训练 `param_delta` 与 BN `buffers`，可直接组合 `core.utils.functional` 中的向量化算子：
 
 ```python
 from typing import List
 import torch.nn as nn
 
-from core.defense import functional as F
 from core.defense.base import BaseDefense
 from core.types import ClientUpdate, DefenseOutput, ServerContext
+from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
 
 

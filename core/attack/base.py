@@ -9,8 +9,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, Mapping, Optional, Union
 
-from core.attack.data.poisoner import BasePoisoner, build_poisoner
-from core.attack.data.triggers import PatchValue
+from core.attack.poisoner import BasePoisoner, PatchValue, build_poisoner
 from core.types import ClientContext, ClientUpdate
 from core.utils.config import AttackStrategyConfig
 from core.utils.registry import ATTACK_REGISTRY
@@ -18,12 +17,7 @@ from core.utils.trainer import train_model
 
 
 class BaseAttacker:
-    """Base class for all backdoor attackers (1 attack = 1 file, zero Client subclassing).
-
-    Subclasses only need to accept their own algorithm hyperparameters and forward
-    ``**kwargs`` to ``super().__init__(**kwargs)`` to inherit full ``Poisoner``
-    configuration (``target_label``, ``poison_ratio``, ``patch_size``, ``poisoner``, etc.).
-    """
+    """Base class for all backdoor attackers (1 attack = 1 file, zero Client subclassing)."""
 
     default_poisoner_name: str = "patch"
     needs_prev_global_delta: bool = False
@@ -60,8 +54,7 @@ class BaseAttacker:
         elif isinstance(poisoner, Mapping):
             p_cfg = dict(poisoner)
             p_name = str(p_cfg.pop("name", self.default_poisoner_name))
-            merged = {**base_kwargs, **p_cfg}
-            self.poisoner = build_poisoner(p_name, **merged)
+            self.poisoner = build_poisoner(p_name, **{**base_kwargs, **p_cfg})
         else:
             self.poisoner = build_poisoner(self.default_poisoner_name, **base_kwargs)
 
@@ -118,6 +111,7 @@ def build_attacker(
     strategy: AttackStrategyConfig,
     *,
     seed: Optional[int] = None,
+    attacker_rank: Optional[int] = None,
 ) -> BaseAttacker:
     """Instantiate a registered ``BaseAttacker`` directly from ``AttackStrategyConfig``."""
     params = dict(strategy.params)
@@ -125,4 +119,7 @@ def build_attacker(
         params["poisoner"] = dict(strategy.poisoner)
     if seed is not None:
         params.setdefault("seed", int(seed))
-    return ATTACK_REGISTRY.build(strategy.name.strip().lower(), **params)
+    attacker: BaseAttacker = ATTACK_REGISTRY.build(strategy.name, **params)
+    if attacker_rank is not None:
+        attacker.poisoner.attacker_rank = int(attacker_rank)
+    return attacker

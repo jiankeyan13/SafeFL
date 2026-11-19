@@ -236,6 +236,7 @@ class ClientContext:
     train_cfg: TrainConfig
     broadcast: ServerBroadcast
     seed: int = 42
+    attacker_rank: Optional[int] = None
     state: Dict[str, Any] = field(default_factory=dict)
     run_dir: Optional[str] = None
 
