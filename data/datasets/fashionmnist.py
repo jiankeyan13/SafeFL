@@ -1,47 +1,39 @@
+"""FashionMNIST dataset specification for v2."""
+from __future__ import annotations
+
 import os
 
-import torchvision.transforms as transforms
 from torchvision.datasets import FashionMNIST
 
-from core.utils.mmap_dataset import MemoryMappedDataset
-from data.dataset_store import DatasetStore
-from data.registry import dataset_registry
-
+from data.registry import DATASET_REGISTRY
+from data.source import ensure_chw_mmap_cache
+from data.spec import AugmentSpec, DatasetPairSpec
 
 FASHIONMNIST_MEAN = (0.2860,)
 FASHIONMNIST_STD = (0.3530,)
-
-_transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(FASHIONMNIST_MEAN, FASHIONMNIST_STD),
-])
+FASHIONMNIST_AUGMENT = AugmentSpec(random_crop_padding=2, random_horizontal_flip=True)
 
 
-def _build_fashionmnist_impl(root: str, is_train: bool) -> DatasetStore:
-    real_dataset = FashionMNIST(
-        root=root,
-        train=is_train,
-        download=True,
-        transform=None,
+@DATASET_REGISTRY.register("fashionmnist")
+def build_fashionmnist(root: str) -> DatasetPairSpec:
+    train_spec = ensure_chw_mmap_cache(
+        raw_dataset_fn=lambda: FashionMNIST(root=root, train=True, download=True, transform=None),
+        cache_prefix=os.path.join(root, "fashionmnist_train"),
+        name="fashionmnist",
+        split="train",
+        num_classes=10,
+        mean=FASHIONMNIST_MEAN,
+        std=FASHIONMNIST_STD,
+        default_augment=FASHIONMNIST_AUGMENT,
     )
-    split_name = "train" if is_train else "test"
-    cache_path = os.path.join(root, f"fashionmnist_{split_name}_mmap")
-    mmap_dataset = MemoryMappedDataset(
-        original_dataset=real_dataset,
-        cache_path=cache_path,
-        transform=_transform,
+    test_spec = ensure_chw_mmap_cache(
+        raw_dataset_fn=lambda: FashionMNIST(root=root, train=False, download=True, transform=None),
+        cache_prefix=os.path.join(root, "fashionmnist_test"),
+        name="fashionmnist",
+        split="test",
+        num_classes=10,
+        mean=FASHIONMNIST_MEAN,
+        std=FASHIONMNIST_STD,
+        default_augment=None,
     )
-    inner_split = "train_plain" if is_train else "test"
-    return DatasetStore("fashionmnist", inner_split, mmap_dataset)
-
-
-@dataset_registry.register("fashionmnist_train_plain")
-def build_fashionmnist_train_plain(root: str, is_train: bool) -> DatasetStore:
-    del is_train
-    return _build_fashionmnist_impl(root, is_train=True)
-
-
-@dataset_registry.register("fashionmnist_test_plain")
-def build_fashionmnist_test(root: str, is_train: bool) -> DatasetStore:
-    del is_train
-    return _build_fashionmnist_impl(root, is_train=False)
+    return DatasetPairSpec(name="fashionmnist", train=train_spec, test=test_spec)

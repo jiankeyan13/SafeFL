@@ -1,39 +1,44 @@
-"""
-DatasetRegistry: 类型安全的数据集工厂注册中心
-封装全局注册表，消除裸全局 dict, 并在重复注册时快速失败
-"""
-from typing import Callable, Dict, Any
+"""Type-safe dataset registry for v2."""
+from __future__ import annotations
 
+from typing import Callable, Dict, List
 
-DatasetFactory = Callable[[str, bool], Any]
+from data.spec import DatasetPairSpec
+
+DatasetBuilder = Callable[[str], DatasetPairSpec]
 
 
 class DatasetRegistry:
-    """数据集工厂注册中心（单例）。"""
+    """Registry mapping canonical dataset names (e.g. 'cifar10') to builders."""
 
     def __init__(self) -> None:
-        self._factories: Dict[str, DatasetFactory] = {}
+        self._builders: Dict[str, DatasetBuilder] = {}
 
-    def register(self, name: str):
-        """装饰器：注册数据集工厂函数。重复注册视为编程错误，立即抛出异常。"""
-        def decorator(func: DatasetFactory) -> DatasetFactory:
-            if name in self._factories:
-                raise ValueError(
-                    f"数据集 '{name}' 已被注册，请勿重复注册。"
-                )
-            self._factories[name] = func
+    def register(self, name: str) -> Callable[[DatasetBuilder], DatasetBuilder]:
+        key = name.strip().lower()
+
+        def decorator(func: DatasetBuilder) -> DatasetBuilder:
+            if key in self._builders:
+                raise ValueError(f"Dataset '{key}' is already registered.")
+            self._builders[key] = func
             return func
+
         return decorator
 
-    def build(self, name: str, root: str, is_train: bool):
-        """根据 tag 名称构建并返回 DatasetStore。名称未注册时抛出 KeyError。"""
-        if name not in self._factories:
+    def build(self, name: str, root: str) -> DatasetPairSpec:
+        key = name.strip().lower()
+        if key not in self._builders:
             raise KeyError(
-                f"数据集 '{name}' 未注册。"
-                f" 已注册的数据集: {list(self._factories.keys())}"
+                f"Dataset '{name}' is not registered. "
+                f"Available: {self.available()}"
             )
-        return self._factories[name](root, is_train)
+        return self._builders[key](root)
+
+    def available(self) -> List[str]:
+        return sorted(self._builders.keys())
+
+    def __contains__(self, name: str) -> bool:
+        return name.strip().lower() in self._builders
 
 
-# 模块单例，供整个项目使用
-dataset_registry = DatasetRegistry()
+DATASET_REGISTRY = DatasetRegistry()

@@ -10,9 +10,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-from data.constants import SPLIT_TRAIN, client_owner
-from data.dataset_store import DatasetStore
-from data.task import TaskSet
+from data.hub import DataHub
 
 ClientId = Union[int, str]
 
@@ -29,24 +27,14 @@ _DATASET_CLASS_NAMES: Dict[str, Tuple[str, ...]] = {
 }
 
 
-def resolve_owner_id(client_id: ClientId) -> str:
-    """将 int / '0' / 'client_0' 统一成 TaskSet 使用的 owner 字符串."""
+def resolve_client_id(client_id: ClientId) -> int:
+    """将 int / '0' / 'client_0' 统一为整型 client_id."""
     if isinstance(client_id, int):
-        return client_owner(client_id)
+        return client_id
     text = str(client_id).strip()
-    if text.isdigit():
-        return client_owner(int(text))
-    return text
-
-
-def _sort_client_ids(client_ids: Sequence[str]) -> List[str]:
-    def _key(cid: str) -> Tuple[int, Union[int, str]]:
-        suffix = cid.rsplit("_", 1)[-1]
-        if suffix.lstrip("-").isdigit():
-            return (0, int(suffix))
-        return (1, cid)
-
-    return sorted(client_ids, key=_key)
+    if text.startswith("client_"):
+        text = text.split("_", 1)[1]
+    return int(text)
 
 
 def _class_names_for(dataset_name: Optional[str], labels: np.ndarray) -> List[str]:
@@ -56,36 +44,17 @@ def _class_names_for(dataset_name: Optional[str], labels: np.ndarray) -> List[st
     return [str(int(lab)) for lab in labels]
 
 
-def collect_label_matrix(
-    task_set: TaskSet,
-    stores: Dict[str, DatasetStore],
-    split: str = SPLIT_TRAIN,
-) -> Tuple[np.ndarray, List[str], np.ndarray]:
-    """
-    统计每个客户端在指定 split 上的标签计数.
-
-    Returns:
-        matrix: shape (n_clients, n_classes), 第 i 行是第 i 个客户端各类样本数.
-        client_ids: 与 matrix 行对齐的 owner id.
-        labels: 与 matrix 列对齐的类别取值.
-    """
-    client_ids = _sort_client_ids(task_set.list_client_ids(exclude_server=True))
+def collect_label_matrix(hub: DataHub) -> Tuple[np.ndarray, List[int], np.ndarray]:
+    """统计每个客户端训练集上的标签计数."""
+    client_ids = hub.client_ids
     if not client_ids:
-        raise ValueError("TaskSet 中没有客户端任务, 无法统计数据分布.")
+        raise ValueError("DataHub 中没有客户端划分, 无法统计数据分布.")
 
-    missing = [cid for cid in client_ids if not task_set.has_task(cid, split)]
-    if missing:
-        preview = ", ".join(missing[:5])
-        extra = "" if len(missing) <= 5 else f" 等 {len(missing)} 个"
-        raise KeyError(f"以下客户端缺少 split={split}: {preview}{extra}")
-
-    per_client: Dict[str, np.ndarray] = {}
-    for cid in client_ids:
-        task = task_set.get_task(cid, split)
-        store = stores[task.dataset_tag]
-        full_labels = np.asarray(store.get_label())
-        indices = np.asarray(task.indices, dtype=np.int64)
-        per_client[cid] = full_labels[indices]
+    full_labels = np.asarray(hub.train_source.targets)
+    per_client: Dict[int, np.ndarray] = {
+        cid: full_labels[hub.spec.partition.client_indices[cid]]
+        for cid in client_ids
+    }
 
     labels = np.unique(np.concatenate(list(per_client.values())))
     col = {int(lab): i for i, lab in enumerate(labels)}
@@ -196,9 +165,11 @@ def _tick_step(n: int, max_ticks: int = 20) -> int:
     return max(1, int(np.ceil(n / max_ticks)))
 
 
-def _short_client_label(owner_id: str) -> str:
-    suffix = owner_id.rsplit("_", 1)[-1]
-    return suffix if suffix.lstrip("-").isdigit() else owner_id
+def _short_client_label(client_id: Union[int, str]) -> str:
+    if isinstance(client_id, int):
+        return str(client_id)
+    suffix = str(client_id).rsplit("_", 1)[-1]
+    return suffix if suffix.lstrip("-").isdigit() else str(client_id)
 
 
 def _label_red_green_cmap(n_classes: int):
@@ -326,10 +297,10 @@ def _draw_proportion_stack(
 
 class DataDistributionVisualizer:
     """
-    联邦学习数据分布可视化.
+    联邦学习数据分布可视化 (v2 DataHub).
 
     典型用法:
-        vis = DataDistributionVisualizer(task_set, stores)
+        vis = DataDistributionVisualizer(hub)
         print(vis.summary())
         vis.plot_system(save_dir="./viz")
         vis.plot_client(0, save_path="./viz/client_0.png")
@@ -337,19 +308,13 @@ class DataDistributionVisualizer:
 
     def __init__(
         self,
-        task_set: TaskSet,
-        stores: Dict[str, DatasetStore],
-        split: str = SPLIT_TRAIN,
+        hub: DataHub,
         dataset_name: Optional[str] = None,
         class_names: Optional[Sequence[str]] = None,
     ):
-        self.task_set = task_set
-        self.stores = stores
-        self.split = split
-        self.matrix, self.client_ids, self.labels = collect_label_matrix(
-            task_set, stores, split=split
-        )
-        inferred = dataset_name or self._infer_dataset_name()
+        self.hub = hub
+        self.matrix, self.client_ids, self.labels = collect_label_matrix(hub)
+        inferred = dataset_name or hub.dataset_name
         self.dataset_name = inferred
         if class_names is not None:
             if len(class_names) != len(self.labels):
@@ -361,75 +326,33 @@ class DataDistributionVisualizer:
             self.class_names = _class_names_for(inferred, self.labels)
         self.stats = compute_stats(self.matrix)
 
-    def _infer_dataset_name(self) -> Optional[str]:
-        if not self.client_ids:
-            return None
-        task = self.task_set.get_task(self.client_ids[0], self.split)
-        store = self.stores.get(task.dataset_tag)
-        return getattr(store, "name", None)
-
-    @classmethod
-    def from_task_set(
-        cls,
-        task_set: TaskSet,
-        stores: Dict[str, DatasetStore],
-        split: str = SPLIT_TRAIN,
-        dataset_name: Optional[str] = None,
-    ) -> "DataDistributionVisualizer":
-        return cls(task_set, stores, split=split, dataset_name=dataset_name)
-
     @classmethod
     def from_data_config(
         cls,
         data_config,
         num_clients: int,
         seed: int = 42,
-        split: str = SPLIT_TRAIN,
     ) -> "DataDistributionVisualizer":
-        """按 DataConfig 重建划分后再可视化, 无需启动完整训练."""
-        from core.bootstrap import bootstrap_registries
-        from data.partitioner import build_partitioner
-        from data.task_generator import TaskGenerator
-
-        bootstrap_registries()
-        partitioner = build_partitioner(data_config.partitioner, seed)
-        generator = TaskGenerator(
-            dataset_name=data_config.dataset,
-            root=data_config.root,
-            partitioner=partitioner,
-            num_clients=num_clients,
-            seed=seed,
-            enable_proxy=data_config.enable_proxy,
-        )
-        task_set, stores = generator.generate()
-        return cls(
-            task_set,
-            stores,
-            split=split,
-            dataset_name=data_config.dataset,
-        )
+        """按 DataConfig 构建 DataHub 后直接可视化, 无需启动训练."""
+        hub = DataHub.build(data_config, num_clients=num_clients, seed=seed)
+        return cls(hub, dataset_name=data_config.dataset)
 
     def summary(self) -> str:
         return self.stats.format()
 
     def client_counts(self, client_id: ClientId) -> np.ndarray:
         """返回指定客户端各类别样本数, 与 class_names 对齐."""
-        owner = resolve_owner_id(client_id)
+        cid = resolve_client_id(client_id)
         try:
-            row = self.client_ids.index(owner)
+            row = self.client_ids.index(cid)
         except ValueError as exc:
-            raise KeyError(f"未找到客户端 {owner}") from exc
+            raise KeyError(f"未找到客户端 {cid}") from exc
         return self.matrix[row].copy()
 
     def client_sample_labels(self, client_id: ClientId) -> np.ndarray:
-        """返回该客户端样本标签, 顺序与 Task.indices / Subset 一致."""
-        owner = resolve_owner_id(client_id)
-        if not self.task_set.has_task(owner, self.split):
-            raise KeyError(f"未找到客户端 {owner} 的 split={self.split}")
-        task = self.task_set.get_task(owner, self.split)
-        store = self.stores[task.dataset_tag]
-        full_labels = np.asarray(store.get_label())
-        return full_labels[np.asarray(task.indices, dtype=np.int64)]
+        """返回该客户端样本标签, 顺序与本地 DataView 一致."""
+        cid = resolve_client_id(client_id)
+        return self.hub.client(cid).targets
 
     def poisoned_client_counts(
         self,
@@ -574,8 +497,9 @@ class DataDistributionVisualizer:
     ):
         """单个客户端的标签柱状图与占比饼图."""
         plt = _require_plt()
-        owner = resolve_owner_id(client_id)
-        counts = self.client_counts(owner)
+        cid = resolve_client_id(client_id)
+        owner = f"client_{cid}"
+        counts = self.client_counts(cid)
         total = int(counts.sum())
         fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.6))
 
@@ -629,8 +553,9 @@ class DataDistributionVisualizer:
 
         plt = _require_plt()
         _setup_cjk_font(plt)
-        owner = resolve_owner_id(client_id)
-        counts = self.client_counts(owner)
+        cid = resolve_client_id(client_id)
+        owner = f"client_{cid}"
+        counts = self.client_counts(cid)
         total = int(counts.sum())
         n_classes = len(counts)
         shares = counts.astype(np.float64) / total if total else np.zeros(n_classes)
@@ -687,9 +612,10 @@ class DataDistributionVisualizer:
 
         plt = _require_plt()
         _setup_cjk_font(plt)
-        owner = resolve_owner_id(client_id)
+        cid = resolve_client_id(client_id)
+        owner = f"client_{cid}"
         counts, poison_counts = self.poisoned_client_counts(
-            owner,
+            cid,
             poison_ratio=poison_ratio,
             target_label=target_label,
             seed=seed,
@@ -791,28 +717,25 @@ class DataDistributionVisualizer:
         """系统级示意图 + 可选的单个客户端图."""
         paths = self.plot_system(save_dir, show=show, prefix=prefix)
         if client_id is not None:
-            owner = resolve_owner_id(client_id)
+            cid = resolve_client_id(client_id)
+            owner = f"client_{cid}"
             client_path = os.path.join(save_dir, f"{prefix}_{owner}.png")
             heatmap_path = os.path.join(save_dir, f"{prefix}_{owner}_heatmap.png")
-            self.plot_client(owner, save_path=client_path, show=show)
-            self.plot_client_heatmap(owner, save_path=heatmap_path, show=show)
+            self.plot_client(cid, save_path=client_path, show=show)
+            self.plot_client_heatmap(cid, save_path=heatmap_path, show=show)
             paths.extend([client_path, heatmap_path])
         return paths
 
 
 def visualize_data_distribution(
-    task_set: TaskSet,
-    stores: Dict[str, DatasetStore],
+    hub: DataHub,
     save_dir: str,
     client_id: Optional[ClientId] = None,
-    split: str = SPLIT_TRAIN,
     show: bool = False,
     dataset_name: Optional[str] = None,
 ) -> DataDistributionVisualizer:
     """便捷入口: 统计分布, 打印摘要, 并保存示意图."""
-    vis = DataDistributionVisualizer(
-        task_set, stores, split=split, dataset_name=dataset_name
-    )
+    vis = DataDistributionVisualizer(hub, dataset_name=dataset_name)
     print(vis.summary())
     paths = vis.save_all(save_dir, client_id=client_id, show=show)
     for path in paths:
@@ -841,7 +764,6 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="与训练管线一致, 从训练集划出 proxy 样本",
     )
-    parser.add_argument("--split", default=SPLIT_TRAIN, help="要查看的 split, 默认 train")
     parser.add_argument("--save-dir", default="./outputs/data_distribution", help="图片输出目录")
     parser.add_argument(
         "--client",
@@ -872,7 +794,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         data_config,
         num_clients=args.num_clients,
         seed=args.seed,
-        split=args.split,
     )
     print(vis.summary())
     paths = vis.save_all(args.save_dir, client_id=args.client, show=args.show)

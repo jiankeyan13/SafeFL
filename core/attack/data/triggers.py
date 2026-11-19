@@ -1,12 +1,22 @@
+"""Vectorized triggers operating in physical ``[0, 1]`` pixel space.
+
+All triggers support both:
+  - 4D batch tensors ``[B, C, H, W]`` with optional boolean ``mask`` and ``inplace=True``
+    (used by ``FastBatchLoader`` with zero extra tensor allocations), and
+  - 3D single-image tensors ``[C, H, W]``.
+"""
+from __future__ import annotations
+
+from typing import Optional, Sequence, Tuple, Union
+
 import torch
 import torch.nn as nn
-from typing import Tuple, Union
 
 _VALID_LOCATIONS = ("bottom_right", "bottom_left", "top_right", "top_left")
+PatchValue = Union[float, Sequence[float]]
 
 
 def _patch_origin(location: str, h: int, w: int, patch_size: int) -> Tuple[int, int]:
-    """Return top-left (row, col) of the patch region in image coordinates."""
     if location == "bottom_right":
         return h - patch_size, w - patch_size
     if location == "bottom_left":
@@ -15,127 +25,207 @@ def _patch_origin(location: str, h: int, w: int, patch_size: int) -> Tuple[int, 
         return 0, w - patch_size
     if location == "top_left":
         return 0, 0
-    raise ValueError(
-        "Invalid location. Must be one of 'bottom_right', 'bottom_left', 'top_right', 'top_left'."
-    )
+    raise ValueError(f"Invalid location {location!r}. Expected one of {_VALID_LOCATIONS}.")
 
 
 def block_slices(patch_size: int, block_id: int, num_blocks: int = 4) -> Tuple[int, int, int, int]:
-    """
-    Return relative (row_start, row_end, col_start, col_end) within the patch for a DBA block.
+    """Return relative ``(row_start, row_end, col_start, col_end)`` for a DBA sub-block."""
+    if num_blocks == 4:
+        if block_id not in (0, 1, 2, 3):
+            raise ValueError(f"block_id must be in [0, 3], got {block_id}")
+        mid = patch_size // 2
+        if block_id == 0:
+            return 0, mid, 0, mid
+        if block_id == 1:
+            return 0, mid, mid, patch_size
+        if block_id == 2:
+            return mid, patch_size, 0, mid
+        return mid, patch_size, mid, patch_size
 
-    Splits the patch at mid = patch_size // 2 into four quadrants (2x2, 2x3, 3x2, 3x3 for size 5).
-    """
-    if num_blocks != 4:
-        raise ValueError(f"Only num_blocks=4 is supported, got {num_blocks}")
-    if block_id not in (0, 1, 2, 3):
-        raise ValueError(f"block_id must be in [0, 3], got {block_id}")
+    if num_blocks <= 0 or not (0 <= block_id < num_blocks):
+        raise ValueError(f"Invalid block_id={block_id} for num_blocks={num_blocks}")
+    # Split horizontally into `num_blocks` strips for general block counts.
+    edges = [int(round(i * patch_size / num_blocks)) for i in range(num_blocks + 1)]
+    r0, r1 = edges[block_id], max(edges[block_id] + 1, edges[block_id + 1])
+    return min(r0, patch_size - 1), min(r1, patch_size), 0, patch_size
 
-    mid = patch_size // 2
-    if block_id == 0:
-        return 0, mid, 0, mid
-    if block_id == 1:
-        return 0, mid, mid, patch_size
-    if block_id == 2:
-        return mid, patch_size, 0, mid
-    return mid, patch_size, mid, patch_size
+
+def _format_patch_value(
+    patch_value: PatchValue,
+    channels: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> Union[float, torch.Tensor]:
+    if isinstance(patch_value, (int, float)):
+        return float(patch_value)
+    vals = list(patch_value)
+    if len(vals) == 1:
+        return float(vals[0])
+    if len(vals) != channels:
+        raise ValueError(
+            f"patch_value length ({len(vals)}) does not match image channels ({channels})."
+        )
+    return torch.tensor(vals, device=device, dtype=dtype).view(channels, 1, 1)
+
+
+def _stamp_rect(
+    img: torch.Tensor,
+    r0: int,
+    r1: int,
+    c0: int,
+    c1: int,
+    patch_value: PatchValue,
+    *,
+    mask: Optional[torch.Tensor] = None,
+    inplace: bool = False,
+) -> torch.Tensor:
+    if not torch.is_tensor(img):
+        raise TypeError("Trigger input must be a torch.Tensor.")
+    if not inplace:
+        img = img.clone()
+
+    if img.ndim == 3:
+        c = img.shape[0]
+        val = _format_patch_value(patch_value, c, img.device, img.dtype)
+        img[:, r0:r1, c0:c1] = val
+        return img
+
+    if img.ndim == 4:
+        if img.shape[0] == 0:
+            return img
+        c = img.shape[1]
+        val = _format_patch_value(patch_value, c, img.device, img.dtype)
+        if torch.is_tensor(val):
+            val = val.unsqueeze(0)  # (1, C, 1, 1)
+        if mask is None:
+            img[:, :, r0:r1, c0:c1] = val
+        elif bool(mask.any()):
+            img[mask, :, r0:r1, c0:c1] = val
+        return img
+
+    raise ValueError(f"Expected 3D [C,H,W] or 4D [B,C,H,W] tensor, got shape {tuple(img.shape)}")
 
 
 class PatchTrigger(nn.Module):
-    """
-    一个可配置的 Patch Trigger (贴片触发器)。
-    
-    在图片的指定角落贴上一个纯色方块。
-    继承 nn.Module, 与 torchvision.transforms 组合使用。
-    """
-    def __init__(self, 
-                 patch_size: int = 5, 
-                 patch_value: Union[float, Tuple[float, float, float]] = 1.0, 
-                 location: str = 'bottom_right'):
-        """
-        Args:
-            patch_size: 方块的边长 (像素)。
-            patch_value: 像素值 (0.0 for black, 1.0 for white)。
-                         对于多通道图像，可以是一个元组。
-            location: 'bottom_right', 'bottom_left', 'top_right', 'top_left'。
-        """
-        super().__init__()
-        if location not in _VALID_LOCATIONS:
-            raise ValueError(
-                "Invalid location. Must be one of 'bottom_right', 'bottom_left', 'top_right', 'top_left'."
-            )
-            
-        self.patch_size = patch_size
-        self.patch_value = patch_value
-        self.location = location
-
-    def forward(self, img: torch.Tensor) -> torch.Tensor:
-        """
-        将 Trigger 应用到输入的图片 Tensor 上。
-        Args:
-            img: 输入的图片 Tensor, 形状应为 [C, H, W]。
-            
-        Returns:
-            被修改后的图片 Tensor。
-        """
-        if not isinstance(img, torch.Tensor):
-            raise TypeError("Input must be a torch.Tensor.")
-            
-        # 复制一份以避免原地修改
-        img = img.clone()
-        
-        c, h, w = img.shape
-        
-        if self.location == 'bottom_right':
-            img[:, h - self.patch_size:, w - self.patch_size:] = self.patch_value
-        elif self.location == 'bottom_left':
-            img[:, h - self.patch_size:, :self.patch_size] = self.patch_value
-        elif self.location == 'top_right':
-            img[:, :self.patch_size, w - self.patch_size:] = self.patch_value
-        elif self.location == 'top_left':
-            img[:, :self.patch_size, :self.patch_size] = self.patch_value
-            
-        return img
-
-
-class PartialPatchTrigger(nn.Module):
-    """
-    DBA 分布式触发器: 只在 patch 的一个子矩形块内填色.
-
-    多个恶意客户端各自训练不同 block, 聚合后模型对完整 patch 产生后门响应.
-    """
+    """Square corner patch trigger in ``[0, 1]`` pixel space."""
 
     def __init__(
         self,
         patch_size: int = 5,
-        patch_value: Union[float, Tuple[float, float, float]] = 1.0,
+        patch_value: PatchValue = 1.0,
+        location: str = "bottom_right",
+    ) -> None:
+        super().__init__()
+        if location not in _VALID_LOCATIONS:
+            raise ValueError(f"Invalid location {location!r}. Expected one of {_VALID_LOCATIONS}.")
+        if patch_size <= 0:
+            raise ValueError(f"patch_size must be positive, got {patch_size}")
+        self.patch_size = int(patch_size)
+        self.patch_value = patch_value
+        self.location = location
+
+    def forward(
+        self,
+        img: torch.Tensor,
+        *,
+        mask: Optional[torch.Tensor] = None,
+        inplace: bool = False,
+    ) -> torch.Tensor:
+        h, w = int(img.shape[-2]), int(img.shape[-1])
+        ps = min(self.patch_size, h, w)
+        r0, c0 = _patch_origin(self.location, h, w, ps)
+        return _stamp_rect(
+            img,
+            r0,
+            r0 + ps,
+            c0,
+            c0 + ps,
+            self.patch_value,
+            mask=mask,
+            inplace=inplace,
+        )
+
+
+class PartialPatchTrigger(nn.Module):
+    """DBA sub-block patch trigger in ``[0, 1]`` pixel space."""
+
+    def __init__(
+        self,
+        patch_size: int = 5,
+        patch_value: PatchValue = 1.0,
         location: str = "bottom_right",
         block_id: int = 0,
         num_blocks: int = 4,
-    ):
+    ) -> None:
         super().__init__()
         if location not in _VALID_LOCATIONS:
-            raise ValueError(
-                "Invalid location. Must be one of 'bottom_right', 'bottom_left', 'top_right', 'top_left'."
-            )
-        self.patch_size = patch_size
+            raise ValueError(f"Invalid location {location!r}. Expected one of {_VALID_LOCATIONS}.")
+        self.patch_size = int(patch_size)
         self.patch_value = patch_value
         self.location = location
-        self.block_id = block_id
-        self.num_blocks = num_blocks
+        self.block_id = int(block_id)
+        self.num_blocks = int(num_blocks)
 
-    def forward(self, img: torch.Tensor) -> torch.Tensor:
-        if not isinstance(img, torch.Tensor):
-            raise TypeError("Input must be a torch.Tensor.")
+    def forward(
+        self,
+        img: torch.Tensor,
+        *,
+        mask: Optional[torch.Tensor] = None,
+        inplace: bool = False,
+    ) -> torch.Tensor:
+        h, w = int(img.shape[-2]), int(img.shape[-1])
+        ps = min(self.patch_size, h, w)
+        r0, c0 = _patch_origin(self.location, h, w, ps)
+        rs, re, cs, ce = block_slices(ps, self.block_id, self.num_blocks)
+        return _stamp_rect(
+            img,
+            r0 + rs,
+            r0 + re,
+            c0 + cs,
+            c0 + ce,
+            self.patch_value,
+            mask=mask,
+            inplace=inplace,
+        )
 
-        img = img.clone()
-        _, h, w = img.shape
-        r0, c0 = _patch_origin(self.location, h, w, self.patch_size)
-        rs, re, cs, ce = block_slices(self.patch_size, self.block_id, self.num_blocks)
-        img[:, r0 + rs : r0 + re, c0 + cs : c0 + ce] = self.patch_value
+
+class BlendTrigger(nn.Module):
+    """Blended random-pattern trigger ``(1 - alpha) * x + alpha * pattern`` in ``[0, 1]``."""
+
+    def __init__(self, alpha: float = 0.2, pattern_seed: int = 2024) -> None:
+        super().__init__()
+        if not 0.0 < float(alpha) <= 1.0:
+            raise ValueError(f"alpha must be in (0, 1], got {alpha}")
+        self.alpha = float(alpha)
+        self.pattern_seed = int(pattern_seed)
+        self._pattern_cache: dict[Tuple[Tuple[int, int, int], torch.device, torch.dtype], torch.Tensor] = {}
+
+    def _get_pattern(self, chw: Tuple[int, int, int], device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        key = (chw, device, dtype)
+        pat = self._pattern_cache.get(key)
+        if pat is None:
+            gen = torch.Generator(device="cpu")
+            gen.manual_seed(self.pattern_seed)
+            pat = torch.rand(chw, generator=gen, dtype=torch.float32).to(device=device, dtype=dtype)
+            self._pattern_cache[key] = pat
+        return pat
+
+    def forward(
+        self,
+        img: torch.Tensor,
+        *,
+        mask: Optional[torch.Tensor] = None,
+        inplace: bool = False,
+    ) -> torch.Tensor:
+        if not inplace:
+            img = img.clone()
+        chw = (int(img.shape[-3]), int(img.shape[-2]), int(img.shape[-1]))
+        pat = self._get_pattern(chw, img.device, img.dtype)
+        a = self.alpha
+        if img.ndim == 3:
+            return img.mul_(1.0 - a).add_(pat, alpha=a)
+        if mask is None:
+            return img.mul_(1.0 - a).add_(pat.unsqueeze(0), alpha=a)
+        if bool(mask.any()):
+            img[mask] = img[mask] * (1.0 - a) + pat.unsqueeze(0) * a
         return img
-
-
-# --- 其他 Trigger ---
-# class BlendedTrigger(nn.Module): ...
-# class SemanticTrigger(nn.Module): ...

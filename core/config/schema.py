@@ -289,17 +289,27 @@ class LoggerConfig:
 
 @dataclass
 class DataConfig:
-    """配置数据层的参数"""
+    """配置数据层的参数 (v2)"""
 
     dataset: str = "cifar10"
     root: str = "./data_source"
     enable_proxy: bool = False
+    proxy_per_class: int = 10
+    use_augmentation: bool = False
+    preload_gpu: bool = False
     partitioner: PartitionerConfig = field(default_factory=PartitionerConfig)
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "DataConfig":
         kwargs = {}
-        for key in ["dataset", "root", "enable_proxy"]:
+        for key in [
+            "dataset",
+            "root",
+            "enable_proxy",
+            "proxy_per_class",
+            "use_augmentation",
+            "preload_gpu",
+        ]:
             if key in config_dict:
                 kwargs[key] = config_dict[key]
 
@@ -422,6 +432,9 @@ class GlobalConfig:
                 "root": self.data.root,
                 "num_clients": self.training.num_clients,
                 "enable_proxy": self.data.enable_proxy,
+                "proxy_per_class": self.data.proxy_per_class,
+                "use_augmentation": self.data.use_augmentation,
+                "preload_gpu": self.data.preload_gpu,
                 "partitioner": {"name": self.data.partitioner.name, "params": self.data.partitioner.params},
             },
             "training": self.training.to_dict(),

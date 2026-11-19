@@ -1,42 +1,39 @@
+"""CIFAR-10 dataset specification for v2."""
+from __future__ import annotations
+
 import os
+
 from torchvision.datasets import CIFAR10
-import torchvision.transforms as transforms
 
-from core.utils.mmap_dataset import MemoryMappedDataset
-from data.dataset_store import DatasetStore
-from data.registry import dataset_registry
+from data.registry import DATASET_REGISTRY
+from data.source import ensure_chw_mmap_cache
+from data.spec import AugmentSpec, DatasetPairSpec
 
-# 与官方 BadNets 一致: ToTensor -> [0, 1], Normalize(0.5) -> [-1, 1]
-# 触发器 patch_value=1.0 对应 pixel_max=1 的纯白
 CIFAR10_MEAN = (0.5, 0.5, 0.5)
 CIFAR10_STD = (0.5, 0.5, 0.5)
-
-_transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(CIFAR10_MEAN, CIFAR10_STD),
-])
+CIFAR10_AUGMENT = AugmentSpec(random_crop_padding=4, random_horizontal_flip=True)
 
 
-def _build_cifar10_impl(root: str, is_train: bool) -> DatasetStore:
-    real_dataset = CIFAR10(root=root, train=is_train, download=True, transform=None)
-    split_name = "train" if is_train else "test"
-    cache_path = os.path.join(root, f"cifar10_{split_name}_mmap")
-    mmap_dataset = MemoryMappedDataset(
-        original_dataset=real_dataset,
-        cache_path=cache_path,
-        transform=_transform,
+@DATASET_REGISTRY.register("cifar10")
+def build_cifar10(root: str) -> DatasetPairSpec:
+    train_spec = ensure_chw_mmap_cache(
+        raw_dataset_fn=lambda: CIFAR10(root=root, train=True, download=True, transform=None),
+        cache_prefix=os.path.join(root, "cifar10_train"),
+        name="cifar10",
+        split="train",
+        num_classes=10,
+        mean=CIFAR10_MEAN,
+        std=CIFAR10_STD,
+        default_augment=CIFAR10_AUGMENT,
     )
-    inner_split = "train_plain" if is_train else "test"
-    return DatasetStore("cifar10", inner_split, mmap_dataset)
-
-
-@dataset_registry.register("cifar10_train_plain")
-def build_cifar10_train_plain(root: str, is_train: bool) -> DatasetStore:
-    del is_train
-    return _build_cifar10_impl(root, is_train=True)
-
-
-@dataset_registry.register("cifar10_test_plain")
-def build_cifar10_test(root: str, is_train: bool) -> DatasetStore:
-    del is_train
-    return _build_cifar10_impl(root, is_train=False)
+    test_spec = ensure_chw_mmap_cache(
+        raw_dataset_fn=lambda: CIFAR10(root=root, train=False, download=True, transform=None),
+        cache_prefix=os.path.join(root, "cifar10_test"),
+        name="cifar10",
+        split="test",
+        num_classes=10,
+        mean=CIFAR10_MEAN,
+        std=CIFAR10_STD,
+        default_augment=None,
+    )
+    return DatasetPairSpec(name="cifar10", train=train_spec, test=test_spec)
