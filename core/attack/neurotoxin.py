@@ -53,15 +53,18 @@ def build_neurotoxin_masks(
 
     entries = []
     flat_scores = []
+    target_dev: Optional[torch.device] = None
     for name, param in model.named_parameters():
         ref = reference_gradients.get(name)
         if not param.requires_grad or ref is None or ref.numel() != param.numel():
             continue
-        scores = ref.detach().to(device="cpu", dtype=torch.float32).abs().reshape(-1)
+        if target_dev is None:
+            target_dev = param.device
+        scores = ref.detach().to(device=target_dev, dtype=torch.float32).abs().reshape(-1)
         entries.append((name, param, scores.numel()))
         flat_scores.append(scores)
 
-    if not flat_scores:
+    if not flat_scores or target_dev is None:
         return {}
 
     all_scores = torch.cat(flat_scores)
@@ -69,7 +72,7 @@ def build_neurotoxin_masks(
     if num_masked == 0:
         return {}
 
-    blocked = torch.zeros(all_scores.numel(), dtype=torch.bool)
+    blocked = torch.zeros(all_scores.numel(), dtype=torch.bool, device=target_dev)
     blocked[torch.topk(all_scores, k=num_masked, largest=True, sorted=False).indices] = True
 
     masks: Dict[str, torch.Tensor] = {}

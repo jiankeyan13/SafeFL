@@ -146,20 +146,23 @@ def build_benign_active_masks(
 ) -> Dict[str, torch.Tensor]:
     entries = []
     flat_scores = []
+    target_dev: Optional[torch.device] = None
     for name in critical_layers:
         if name not in global_params or name not in benign_params:
             continue
         ref = benign_params[name].detach()
-        base = global_params[name].detach().to(device=ref.device, dtype=torch.float32)
-        delta_abs = (ref.float() - base).abs().reshape(-1)
+        if target_dev is None:
+            target_dev = ref.device
+        base = global_params[name].detach().to(device=target_dev, dtype=torch.float32)
+        delta_abs = (ref.to(device=target_dev, dtype=torch.float32) - base).abs().reshape(-1)
         entries.append((name, ref, delta_abs.numel()))
-        flat_scores.append(delta_abs.cpu())
+        flat_scores.append(delta_abs)
 
-    if not entries:
+    if not entries or target_dev is None:
         return {}
 
     scores = torch.cat(flat_scores)
-    blocked = torch.zeros(scores.numel(), dtype=torch.bool)
+    blocked = torch.zeros(scores.numel(), dtype=torch.bool, device=target_dev)
     num_masked = min(scores.numel(), int(scores.numel() * mask_ratio))
     if num_masked > 0:
         blocked[torch.topk(scores, k=num_masked, largest=True, sorted=False).indices] = True
@@ -242,6 +245,8 @@ def _log_sparalign_csvs(
 @ATTACK_REGISTRY.register("sparalignfl")
 class SparAlignFLAttack(BaseAttacker):
     """Two-stage contrastive critical-layer localization & concentrated backdoor training."""
+
+    needs_prev_global_delta = True
 
     def __init__(
         self,

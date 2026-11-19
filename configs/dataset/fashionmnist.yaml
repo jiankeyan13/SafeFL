@@ -1,5 +1,4 @@
 # @package _global_
-dataset: fashionmnist
 data:
   dataset: fashionmnist
   root: ./data_source

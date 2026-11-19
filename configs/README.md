@@ -32,4 +32,4 @@ python main.py training.rounds=10 client.lr=0.001
 python main.py -m algorithm=fedavg,fltrust,flame seed=1,2,3
 ```
 
-Hydra 负责 YAML 加载、配置组合、命令行覆盖和 sweep。SafeFL 内部配置结构位于 `core/config/`。
+Hydra 负责 YAML 加载、配置组合、命令行覆盖和 sweep。SafeFL 内部配置结构位于 `core/utils/config.py`。

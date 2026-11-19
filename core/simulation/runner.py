@@ -9,15 +9,15 @@ import numpy as np
 import torch
 
 from core.attack.coordinator import AttackCoordinator
-from core.config import GlobalConfig
 from core.defense import build_defense
-from core.server import Server
 from core.simulation.executor import BaseExecutor, create_executor
+from core.simulation.server import Server
 from core.types import ClientUpdate, ServerContext
-from core.utils.evaluator import Evaluator
+from core.utils.config import GlobalConfig
+from core.utils.evaluator import evaluate_backdoor, evaluate_clean
 from core.utils.logger import Logger
 from core.utils.lr_schedule import get_lr_from_schedule
-from core.utils.registry import MODEL_REGISTRY
+from core.utils.registry import MODEL_REGISTRY, bootstrap_registries
 from core.utils.trainer import build_criterion
 from data.hub import DataHub
 
@@ -25,7 +25,13 @@ from data.hub import DataHub
 class Runner:
     """Drives the standard 6-step FL round loop without any algorithm-specific branches."""
 
-    def __init__(self, config: Optional[Dict[str, Any] | GlobalConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any] | GlobalConfig] = None,
+        *,
+        run_dir: Optional[str] = None,
+    ) -> None:
+        bootstrap_registries()
         if config is None:
             self.config = GlobalConfig()
         elif isinstance(config, GlobalConfig):
@@ -37,11 +43,11 @@ class Runner:
         self.seed = int(self.config.seed)
         self._set_seed(self.seed)
 
-        self.logger = Logger.from_logger_config(
+        self.logger = Logger(
             self.config.logger_config,
             self.config.to_dict(),
-        )
-        self.logger.start()
+            run_dir=run_dir,
+        ).start()
 
         # 1. Data Hub
         self.hub = DataHub.build(
@@ -71,7 +77,6 @@ class Runner:
         )
 
         # 4. Evaluation Loaders
-        self.evaluator = Evaluator()
         self.criterion = build_criterion(self.config.client)
         eval_bs = max(self.config.client.batch_size, 128)
         self.clean_eval_loader = self.hub.test().loader(
@@ -146,8 +151,12 @@ class Runner:
                 else:
                     self.logger.info(f"Selected {len(selected_ids)} clients: {selected_ids}")
 
-                # Step 2: Broadcast downlink packet
-                packet = self.server.broadcast(round_idx=round_idx, lr=round_lr)
+                # Step 2: Broadcast downlink packet (attaches prev_delta only when needed)
+                packet = self.server.broadcast(
+                    round_idx=round_idx,
+                    lr=round_lr,
+                    include_prev_delta=self.coordinator.uses_prev_global_delta,
+                )
 
                 # Step 3: Execute local/attack steps via LocalExecutor or RayExecutor
                 raw_results = self.executor.run_round(tasks, packet)
@@ -181,15 +190,21 @@ class Runner:
             self.logger.close()
 
     def _run_global_eval(self, round_idx: int) -> Dict[str, float]:
-        results = self.server.evaluate(self.evaluator, self.clean_eval_loader, self.criterion)
+        results = evaluate_clean(
+            self.server.global_model,
+            self.clean_eval_loader,
+            self.criterion,
+            self.device,
+        )
         if self.poisoned_eval_loader is not None:
-            bd = self.evaluator.evaluate_backdoor(
-                self.server.global_model,
-                self.poisoned_eval_loader,
-                self.criterion,
-                self.device,
+            results.update(
+                evaluate_backdoor(
+                    self.server.global_model,
+                    self.poisoned_eval_loader,
+                    self.criterion,
+                    self.device,
+                )
             )
-            results.update(bd)
 
         prefixed = {f"global/{k}": v for k, v in results.items()}
         self.logger.log_metrics(prefixed, step=round_idx)
@@ -216,20 +231,6 @@ class Runner:
             metric_name = f"train/avg_{key}" if "/" not in key else f"train/{key}"
             aggregated[metric_name] = val
         return aggregated
-
-    def save_checkpoint(self, round_idx: int, tag: str = "best") -> str:
-        filename = f"checkpoint_{tag}.pth"
-        path = os.path.join(self.logger.run_dir, filename)
-        torch.save(
-            {
-                "round": round_idx,
-                "model_state_dict": self.server.global_model.state_dict(),
-                "config": self.config.to_dict(),
-            },
-            path,
-        )
-        self.logger.info(f"Checkpoint saved -> {filename} (round {round_idx})")
-        return path
 
     @staticmethod
     def _set_seed(seed: int) -> None:

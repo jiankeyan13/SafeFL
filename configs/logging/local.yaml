@@ -6,4 +6,3 @@ use_wandb: false
 use_tensorboard: false
 use_csv: false
 console_metrics: false
-save_interval: 10

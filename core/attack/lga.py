@@ -43,6 +43,8 @@ def project_model_layerwise_(
 class LGAAttack(BaseAttacker):
     """Two-phase clean pretrain + poisoned training with per-epoch layerwise alignment."""
 
+    needs_prev_global_delta = True
+
     def __init__(self, epoch_clean: int = 0, eps: float = 1e-8, **kwargs: Any) -> None:
         if epoch_clean < 0:
             raise ValueError(f"epoch_clean must be >= 0, got {epoch_clean}")

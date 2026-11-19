@@ -12,7 +12,7 @@ from data.source import SharedDataSource
 from data.spec import FederatedDataSpec
 
 if TYPE_CHECKING:
-    from core.config import DataConfig
+    from core.utils.config import DataConfig
 
 
 class DataHub:

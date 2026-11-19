@@ -8,7 +8,7 @@ import torch.nn as nn
 
 from core.defense import functional as F
 from core.defense.base import BaseDefense
-from core.types import ClientUpdate, DefenseOutput, ServerContext, StateDict
+from core.types import ClientUpdate, DefenseOutput, ServerContext
 from core.utils.registry import DEFENSE_REGISTRY
 
 
@@ -29,20 +29,20 @@ class RLRDefense(BaseDefense):
         ctx: ServerContext,
     ) -> DefenseOutput:
         del global_model
-        avg_delta, buffers = F.aggregate_updates(updates, device=ctx.device)
+        delta_mat, keys = F.stack_flat_deltas(updates, device=ctx.device)
+        w = torch.tensor(
+            [float(max(int(u.num_samples), 1)) for u in updates],
+            dtype=torch.float32,
+            device=ctx.device,
+        )
+        avg_vec = (delta_mat * (w / w.sum()).unsqueeze(1)).sum(dim=0)
 
-        masked_delta: StateDict = {}
-        for k, avg_t in avg_delta.items():
-            stacked = torch.stack(
-                [u.param_delta[k].to(device=ctx.device, dtype=torch.float32) for u in updates],
-                dim=0,
-            )
-            sum_signs = torch.sign(stacked).sum(dim=0)
-            sign_mask = torch.where(
-                sum_signs.abs() >= self.robustLR_threshold,
-                torch.ones_like(sum_signs),
-                -torch.ones_like(sum_signs),
-            )
-            masked_delta[k] = (avg_t.float() * sign_mask).to(dtype=avg_t.dtype)
-
-        return DefenseOutput(param_delta=masked_delta, buffers=buffers)
+        sum_signs = torch.sign(delta_mat).sum(dim=0)
+        sign_mask = torch.where(
+            sum_signs.abs() >= self.robustLR_threshold,
+            torch.ones_like(sum_signs),
+            -torch.ones_like(sum_signs),
+        )
+        param_delta = F.unflatten_delta(avg_vec * sign_mask, updates[0].param_delta, keys)
+        buffers = F.average_buffers(updates, weight_by_samples=True, device=ctx.device)
+        return DefenseOutput(param_delta=param_delta, buffers=buffers)

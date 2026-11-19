@@ -1,6 +1,6 @@
 """Core data contracts ("boxes") and model parameter/buffer helpers for SafeFL v2.
 
-This module defines the three primary data structures exchanged across layers:
+Defines the three primary data structures exchanged across layers:
   1. ``ServerBroadcast`` : Server -> ClientWorker (downlink per round)
   2. ``ClientContext``   : ClientWorker -> BenignClient / Attacker (local workspace)
   3. ``ClientUpdate``    : BenignClient / Attacker -> Server / Defense (uplink per round)
@@ -11,7 +11,7 @@ and helper functions that keep learnable ``params`` physically separated from BN
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -33,13 +33,7 @@ def split_model_state(
     *,
     trainable_only: bool = True,
 ) -> Tuple[StateDict, StateDict]:
-    """Split ``model`` into cloned ``(params, buffers)`` dicts.
-
-    - ``params`` contains learnable parameters from ``model.named_parameters()``
-      (filtered by ``requires_grad`` when ``trainable_only=True``).
-    - ``buffers`` contains non-parameter state from ``model.named_buffers()``
-      (e.g., BatchNorm ``running_mean``, ``running_var``, ``num_batches_tracked``).
-    """
+    """Split ``model`` into cloned ``(params, buffers)`` dicts."""
     params: StateDict = {
         name: param.detach().clone()
         for name, param in model.named_parameters()
@@ -72,16 +66,17 @@ def load_model_state(
 
 
 @torch.no_grad()
+def extract_model_buffers(model: nn.Module) -> StateDict:
+    """Clone all non-parameter ``buffers`` (e.g. BatchNorm running stats) from ``model``."""
+    return {name: buf.detach().clone() for name, buf in model.named_buffers()}
+
+
+@torch.no_grad()
 def compute_param_delta(
     model: nn.Module,
     initial_params: Mapping[str, torch.Tensor],
 ) -> Tuple[StateDict, StateDict]:
-    """Compute ``(param_delta, current_buffers)`` after local training.
-
-    ``param_delta`` strictly contains ``current_param - initial_param`` for keys
-    in ``initial_params``; BatchNorm statistics are returned separately in
-    ``current_buffers``.
-    """
+    """Compute ``(param_delta, current_buffers)`` after local training."""
     named_params = dict(model.named_parameters())
     param_delta: StateDict = {}
     for name, init_val in initial_params.items():
@@ -89,11 +84,7 @@ def compute_param_delta(
             cur_val = named_params[name].detach()
             param_delta[name] = cur_val - init_val.to(device=cur_val.device, dtype=cur_val.dtype)
 
-    current_buffers: StateDict = {
-        name: buf.detach().clone()
-        for name, buf in model.named_buffers()
-    }
-    return param_delta, current_buffers
+    return param_delta, extract_model_buffers(model)
 
 
 @torch.no_grad()
@@ -127,6 +118,19 @@ def to_cpu_state(state: Optional[Mapping[str, torch.Tensor]]) -> Optional[StateD
         k: (v.detach().cpu() if torch.is_tensor(v) else v)
         for k, v in state.items()
     }
+
+
+def to_cpu_tree(obj: Any) -> Any:
+    """Recursively detach and move any nested tensors onto CPU."""
+    if torch.is_tensor(obj):
+        return obj.detach().cpu()
+    if isinstance(obj, dict):
+        return {k: to_cpu_tree(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [to_cpu_tree(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(to_cpu_tree(v) for v in obj)
+    return obj
 
 
 # =============================================================================
@@ -164,8 +168,7 @@ class TrainConfig:
         direct = {k: v for k, v in kwargs.items() if k in known_fields and v is not None}
         unknown = {k: v for k, v in kwargs.items() if k not in known_fields}
         if unknown:
-            merged_extra = {**self.extra, **unknown}
-            direct["extra"] = merged_extra
+            direct["extra"] = {**self.extra, **unknown}
         return replace(self, **direct)
 
 
@@ -220,8 +223,8 @@ class ClientUpdate:
 class ClientContext:
     """Box 3 (Workspace): Handed to ``client.step(ctx)`` or ``attacker.step(ctx)``.
 
-    ``model`` is already loaded with ``broadcast.params + buffers`` on ``device``,
-    and ``initial_params`` / ``initial_buffers`` hold round-start snapshots on ``device``.
+    ``model`` is pre-loaded with ``broadcast.params + buffers`` on ``device``, and
+    ``initial_params`` / ``initial_buffers`` hold read-only round-start snapshots on ``device``.
     """
 
     client_id: int
@@ -232,6 +235,7 @@ class ClientContext:
     data: "DataView"
     train_cfg: TrainConfig
     broadcast: ServerBroadcast
+    seed: int = 42
     state: Dict[str, Any] = field(default_factory=dict)
     run_dir: Optional[str] = None
 
@@ -272,7 +276,7 @@ class ClientContext:
         return_orig_label: bool = False,
         seed: Optional[int] = None,
     ) -> "FastBatchLoader":
-        """Build a ``FastBatchLoader`` pre-configured with ``device``, ``batch_size``, and ``round_idx``."""
+        """Build a ``FastBatchLoader`` pre-configured with ``device``, ``batch_size``, ``round_idx``, and ``seed``."""
         target_view = self.data if view is None else view
         return target_view.loader(
             batch_size=self.train_cfg.batch_size if batch_size is None else int(batch_size),
@@ -284,7 +288,7 @@ class ClientContext:
             augment=augment,
             return_orig_label=return_orig_label,
             round_idx=self.round_idx,
-            seed=seed,
+            seed=self.seed if seed is None else seed,
         )
 
     def pack_update(
@@ -295,17 +299,13 @@ class ClientContext:
         num_samples: Optional[int] = None,
         metrics: Optional[Mapping[str, float]] = None,
     ) -> ClientUpdate:
-        """Package local results into a ``ClientUpdate`` box.
-
-        When ``param_delta`` is omitted, automatically computes
-        ``self.model - self.initial_params`` and extracts current BN ``buffers``.
-        """
-        if param_delta is None or buffers is None:
-            auto_delta, auto_buffers = compute_param_delta(self.model, self.initial_params)
-            if param_delta is None:
-                param_delta = auto_delta
-            if buffers is None:
-                buffers = auto_buffers
+        """Package local results into a ``ClientUpdate`` box without redundant copies."""
+        if param_delta is None and buffers is None:
+            param_delta, buffers = compute_param_delta(self.model, self.initial_params)
+        elif param_delta is None:
+            param_delta, _ = compute_param_delta(self.model, self.initial_params)
+        elif buffers is None:
+            buffers = extract_model_buffers(self.model)
 
         return ClientUpdate(
             client_id=int(self.client_id),

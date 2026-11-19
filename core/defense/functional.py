@@ -205,6 +205,74 @@ def aggregate_updates(
     return param_delta, buffers
 
 
+def average_buffers(
+    updates: Sequence[ClientUpdate],
+    indices: Optional[Sequence[int]] = None,
+    *,
+    weights: Optional[Sequence[float]] = None,
+    weight_by_samples: bool = False,
+    device: Optional[torch.device] = None,
+) -> Optional[StateDict]:
+    """Average BatchNorm ``buffers`` across selected ``updates`` (returns ``None`` if empty)."""
+    selected = list(updates) if indices is None else [updates[i] for i in indices]
+    buf_list = [u.buffers for u in selected if u.buffers]
+    if not buf_list:
+        return None
+    if weights is None:
+        eff_w = (
+            [float(max(int(u.num_samples), 1)) for u in selected if u.buffers]
+            if weight_by_samples
+            else [1.0] * len(buf_list)
+        )
+    else:
+        raw_w = [float(w) for w, u in zip(weights, selected) if u.buffers]
+        eff_w = (
+            [w * max(int(u.num_samples), 1) for w, u in zip(weights, selected) if u.buffers]
+            if weight_by_samples
+            else raw_w
+        )
+    return weighted_average_dicts(buf_list, eff_w, device=device)
+
+
+def clip_and_average_flat(
+    delta_mat: torch.Tensor,
+    indices: Sequence[int],
+    max_norm: float,
+    template: StateDict,
+    keys: Sequence[str],
+    *,
+    norms: Optional[torch.Tensor] = None,
+    weights: Optional[Sequence[float]] = None,
+    eps: float = 1e-12,
+) -> StateDict:
+    """Vectorized L2 norm clipping + weighted average directly on a ``[N, D]`` matrix."""
+    if not indices:
+        return zero_delta_like(template, device=delta_mat.device)
+
+    idx_t = torch.as_tensor(list(indices), dtype=torch.long, device=delta_mat.device)
+    sub_mat = delta_mat.index_select(0, idx_t)
+    sub_norms = (
+        norms.index_select(0, idx_t)
+        if norms is not None
+        else torch.norm(sub_mat, p=2, dim=1)
+    )
+    cap = float(max_norm)
+    if cap > 0.0:
+        gammas = torch.clamp(cap / sub_norms.clamp_min(eps), max=1.0)
+        sub_mat = sub_mat * gammas.unsqueeze(1)
+
+    if weights is None:
+        avg_vec = sub_mat.mean(dim=0)
+    else:
+        w_t = torch.as_tensor(list(weights), dtype=torch.float32, device=delta_mat.device)
+        w_sum = w_t.sum()
+        if float(w_sum.item()) <= 0.0:
+            return zero_delta_like(template, device=delta_mat.device)
+        avg_vec = (sub_mat * (w_t / w_sum).unsqueeze(1)).sum(dim=0)
+
+    return unflatten_delta(avg_vec, template, keys)
+
+
 def add_gaussian_noise(
     param_delta: StateDict,
     std: float,

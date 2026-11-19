@@ -726,7 +726,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
-    from core.config import DataConfig, PartitionerConfig
+    from core.utils.config import DataConfig, PartitionerConfig
 
     args = _build_parser().parse_args(argv)
     params: Dict[str, object] = {}

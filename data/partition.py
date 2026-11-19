@@ -9,7 +9,7 @@ import numpy as np
 from data.spec import PartitionMap
 
 if TYPE_CHECKING:
-    from core.config import PartitionerConfig
+    from core.utils.config import PartitionerConfig
 
 
 class Partitioner(ABC):

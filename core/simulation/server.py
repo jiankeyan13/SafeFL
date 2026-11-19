@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import random
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -17,11 +17,10 @@ from core.types import (
     apply_update_to_model,
     split_model_state,
 )
-from core.utils.evaluator import Evaluator
 
 
 class Server:
-    """Clean FL Server managing global model, broadcast, defense aggregation, and evaluation."""
+    """Clean FL Server managing global model, broadcast, and defense aggregation."""
 
     def __init__(
         self,
@@ -44,7 +43,13 @@ class Server:
         k = max(1, min(int(num_select), len(client_ids)))
         return self.rng.sample(list(client_ids), k)
 
-    def broadcast(self, round_idx: int, lr: float) -> ServerBroadcast:
+    def broadcast(
+        self,
+        round_idx: int,
+        lr: float,
+        *,
+        include_prev_delta: bool = False,
+    ) -> ServerBroadcast:
         """Package current global model state & round metadata into ``ServerBroadcast``."""
         params, buffers = split_model_state(self.global_model)
         return ServerBroadcast(
@@ -52,7 +57,7 @@ class Server:
             params=params,
             buffers=buffers,
             lr=float(lr),
-            prev_delta=self.last_aggregated_delta,
+            prev_delta=self.last_aggregated_delta if include_prev_delta else None,
         )
 
     def step(
@@ -72,19 +77,9 @@ class Server:
                 batch_size=ctx.train_cfg.batch_size,
                 shuffle=True,
                 device=self.device,
+                round_idx=ctx.round_idx,
             )
             F.calibrate_bn(self.global_model, proxy_loader, self.device)
 
-        self.last_aggregated_delta = {
-            k: v.detach().clone() for k, v in out.param_delta.items()
-        }
+        self.last_aggregated_delta = {k: v.detach() for k, v in out.param_delta.items()}
         return dict(out.metrics)
-
-    def evaluate(
-        self,
-        evaluator: Evaluator,
-        dataloader: Iterable[Any],
-        criterion: Optional[nn.Module],
-    ) -> Dict[str, float]:
-        """Evaluate ``self.global_model`` on ``dataloader``."""
-        return evaluator.evaluate(self.global_model, dataloader, criterion, self.device)

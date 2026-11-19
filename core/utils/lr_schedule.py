@@ -5,7 +5,7 @@ import math
 from typing import TYPE_CHECKING, Any, Mapping, Union
 
 if TYPE_CHECKING:
-    from core.config import LRScheduleConfig
+    from core.utils.config import LRScheduleConfig
 
 
 def get_lr_warmup_cosine(

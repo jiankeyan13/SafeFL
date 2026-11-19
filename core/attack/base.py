@@ -11,8 +11,8 @@ from typing import Any, Dict, Mapping, Optional, Union
 
 from core.attack.data.poisoner import BasePoisoner, build_poisoner
 from core.attack.data.triggers import PatchValue
-from core.config import AttackStrategyConfig
 from core.types import ClientContext, ClientUpdate
+from core.utils.config import AttackStrategyConfig
 from core.utils.registry import ATTACK_REGISTRY
 from core.utils.trainer import train_model
 
@@ -26,6 +26,7 @@ class BaseAttacker:
     """
 
     default_poisoner_name: str = "patch"
+    needs_prev_global_delta: bool = False
 
     def __init__(
         self,
@@ -81,7 +82,7 @@ class BaseAttacker:
 
     def step(self, ctx: ClientContext) -> ClientUpdate:
         """Default backdoor step: train on ``self.poisoner``-poisoned local data."""
-        loader = ctx.loader(poisoner=self.poisoner, seed=self.seed)
+        loader = ctx.loader(poisoner=self.poisoner)
         stats = train_model(ctx.model, loader, ctx.train_cfg)
         return ctx.pack_update(metrics={"loss": stats.loss})
 

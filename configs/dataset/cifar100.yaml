@@ -1,5 +1,4 @@
 # @package _global_
-dataset: cifar100
 data:
   dataset: cifar100
   root: ./data_source

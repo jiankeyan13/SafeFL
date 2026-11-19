@@ -61,6 +61,7 @@ class FLTrustDefense(BaseDefense):
             batch_size=server_cfg.batch_size,
             shuffle=True,
             device=ctx.device,
+            round_idx=ctx.round_idx,
         )
         try:
             train_model(global_model, proxy_loader, server_cfg, device=ctx.device)
@@ -76,7 +77,7 @@ class FLTrustDefense(BaseDefense):
         ctx: ServerContext,
     ) -> DefenseOutput:
         delta_0 = self._compute_reference_delta(global_model, ctx)
-        keys = F.ordered_keys(delta_0)
+        delta_mat, keys = F.stack_flat_deltas(updates, device=ctx.device)
         flat_0 = F.flatten_delta(delta_0, keys, device=ctx.device)
         ref_norm = float(torch.norm(flat_0, p=2).item())
 
@@ -87,47 +88,38 @@ class FLTrustDefense(BaseDefense):
                 metrics={"defense/accepted_clients": 0.0, "defense/ref_norm": ref_norm},
             )
 
-        scaled_deltas = []
-        accepted_buffers = []
-        trust_weights: List[float] = []
+        norms = torch.norm(delta_mat, p=2, dim=1)
+        cos_sim = torch.clamp(
+            (delta_mat @ flat_0) / ((ref_norm + self.eps) * (norms + self.eps)),
+            -1.0,
+            1.0,
+        )
+        ts = torch.relu(cos_sim)
+        keep_mask = ts > 0.0
+        ts_sum = float(ts[keep_mask].sum().item())
 
-        for u in updates:
-            flat_i = F.flatten_delta(u.param_delta, keys, device=ctx.device)
-            norm_i = float(torch.norm(flat_i, p=2).item())
-            cos_sim = float(
-                torch.clamp(
-                    (flat_0 @ flat_i) / ((ref_norm + self.eps) * (norm_i + self.eps)),
-                    -1.0,
-                    1.0,
-                ).item()
-            )
-            ts = max(0.0, cos_sim)
-            if ts <= 0.0:
-                continue
-            scale = (ref_norm + self.eps) / (norm_i + self.eps)
-            scaled_deltas.append(F.scale_delta(u.param_delta, scale, device=ctx.device))
-            if u.buffers:
-                accepted_buffers.append(u.buffers)
-            trust_weights.append(ts)
-
-        if not scaled_deltas or sum(trust_weights) <= 0.0:
+        if not bool(keep_mask.any()) or ts_sum <= 0.0:
             return DefenseOutput(
                 param_delta=F.zero_delta_like(updates[0].param_delta, device=ctx.device),
                 buffers=None,
                 metrics={"defense/accepted_clients": 0.0, "defense/ref_norm": ref_norm},
             )
 
-        param_delta = F.weighted_average_dicts(scaled_deltas, trust_weights, device=ctx.device)
-        buffers = (
-            F.weighted_average_dicts(accepted_buffers, trust_weights, device=ctx.device)
-            if accepted_buffers
-            else None
-        )
+        # Each accepted client's normalized contribution is: ts_i * ((ref_norm / norm_i) * delta_i)
+        scales = (ref_norm + self.eps) / (norms[keep_mask] + self.eps)
+        eff_coeff = (ts[keep_mask] * scales) / ts_sum
+        agg_vec = (delta_mat[keep_mask] * eff_coeff.unsqueeze(1)).sum(dim=0)
+        param_delta = F.unflatten_delta(agg_vec, updates[0].param_delta, keys)
+
+        kept_idx = keep_mask.nonzero(as_tuple=True)[0].tolist()
+        kept_ts = ts[keep_mask].tolist()
+        buffers = F.average_buffers(updates, kept_idx, weights=kept_ts, device=ctx.device)
+
         return DefenseOutput(
             param_delta=param_delta,
             buffers=buffers,
             metrics={
-                "defense/accepted_clients": float(len(trust_weights)),
+                "defense/accepted_clients": float(len(kept_idx)),
                 "defense/ref_norm": ref_norm,
             },
         )

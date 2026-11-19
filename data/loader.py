@@ -96,11 +96,10 @@ def apply_batch_augment(
 class FastBatchLoader:
     """Zero-worker, batch-vectorized iterator over a ``DataView``.
 
-    Execution order on every batch (for ``SharedDataSource``):
-      1. Gather ``uint8 [B, C, H, W]`` & ``int64 [B]`` -> transfer to ``device`` -> ``float32 [0, 1]``
-      2. (Optional) ``poisoner`` in true ``[0, 1]`` pixel space
-      3. (Optional) vectorized per-sample batch augmentation (``RandomCrop`` / ``HorizontalFlip``)
-      4. Channel-wise ``Normalize(mean, std)``
+    Seeding semantics when ``seed`` is provided:
+      - ``_poison_mask`` uses ``(seed, client_id)`` (fixed compromised subset across rounds).
+      - Mini-batch shuffle and random augmentation incorporate ``(seed, client_id, round_idx)``
+        so each round and each local epoch draws fresh, reproducible mini-batches.
     """
 
     def __init__(
@@ -146,9 +145,21 @@ class FastBatchLoader:
             self.use_augment = bool(augment and aug_spec is not None and aug_spec.enabled)
         self._augment_spec = aug_spec
 
-        self._rng = np.random.default_rng(seed)
-        self._aug_seed = None if seed is None else derive_stable_seed(seed, "augment", view.client_id)
-        self._aug_step = 0
+        # Shuffle & augmentation RNGs vary with (seed, client_id, round_idx) so rounds never
+        # replay identical permutations, while remaining 100% deterministic across runs.
+        shuffle_seed = (
+            None
+            if seed is None
+            else derive_stable_seed(seed, "shuffle", view.client_id, round_idx)
+        )
+        self._rng = np.random.default_rng(shuffle_seed)
+        self._aug_seed = (
+            None
+            if seed is None
+            else derive_stable_seed(seed, "augment", view.client_id, round_idx)
+        )
+        self._aug_gen: Optional[torch.Generator] = None
+        self._aug_gen_dev: Optional[torch.device] = None
 
         self._poison_mask: Optional[np.ndarray] = None
         if self.poisoner is not None and self.mode == "train" and len(self.view) > 0:
@@ -178,13 +189,15 @@ class FastBatchLoader:
             return n // self.batch_size
         return math.ceil(n / self.batch_size)
 
-    def _next_aug_generator(self, device: torch.device) -> Optional[torch.Generator]:
+    def _get_aug_generator(self, device: torch.device) -> Optional[torch.Generator]:
         if self._aug_seed is None:
             return None
-        gen = torch.Generator(device=device)
-        gen.manual_seed(derive_stable_seed(self._aug_seed, self._aug_step))
-        self._aug_step += 1
-        return gen
+        if self._aug_gen is None or self._aug_gen_dev != device:
+            gen = torch.Generator(device=device)
+            gen.manual_seed(self._aug_seed)
+            self._aug_gen = gen
+            self._aug_gen_dev = device
+        return self._aug_gen
 
     def __iter__(self) -> Iterator[Any]:
         src = self.view.source
@@ -192,13 +205,10 @@ class FastBatchLoader:
         if n == 0:
             return
 
-        if self.shuffle:
-            pos_order = self._rng.permutation(n)
-        else:
-            pos_order = np.arange(n, dtype=np.int64)
-
+        pos_order = self._rng.permutation(n) if self.shuffle else np.arange(n, dtype=np.int64)
         limit = (n // self.batch_size) * self.batch_size if self.drop_last else n
         dev = self.device or torch.device("cpu")
+        aug_gen = self._get_aug_generator(dev) if self.use_augment else None
 
         for start in range(0, limit, self.batch_size):
             pos = pos_order[start : start + self.batch_size]
@@ -222,9 +232,7 @@ class FastBatchLoader:
                         round_idx=self.round_idx,
                     )
                     if self.use_augment and self._augment_spec is not None:
-                        bx = apply_batch_augment(
-                            bx, self._augment_spec, self._next_aug_generator(bx.device)
-                        )
+                        bx = apply_batch_augment(bx, self._augment_spec, aug_gen)
                     src.normalize_(bx)
                     yield bx, by
                 else:
@@ -239,19 +247,13 @@ class FastBatchLoader:
             else:
                 # 3. Clean path: optional augmentation -> Normalize.
                 if self.use_augment and self._augment_spec is not None:
-                    bx = apply_batch_augment(
-                        bx, self._augment_spec, self._next_aug_generator(bx.device)
-                    )
+                    bx = apply_batch_augment(bx, self._augment_spec, aug_gen)
                 src.normalize_(bx)
                 yield bx, by
 
 
 class DataView:
-    """Zero-copy index slice over a ``SharedDataSource``.
-
-    Provides 1-line splitting and microsecond ``FastBatchLoader`` assembly for
-    benign clients, complex multi-branch attackers, and server evaluators.
-    """
+    """Zero-copy index slice over a ``SharedDataSource``."""
 
     def __init__(
         self,

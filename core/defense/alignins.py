@@ -60,7 +60,7 @@ class AlignInsDefense(BaseDefense):
     ) -> DefenseOutput:
         n = len(updates)
         delta_mat, keys = F.stack_flat_deltas(updates, device=ctx.device)
-        norms = torch.norm(delta_mat, p=2, dim=1).tolist()
+        norms = torch.norm(delta_mat, p=2, dim=1)
 
         if n < 2 or delta_mat.shape[1] == 0:
             benign_idx = list(range(n))
@@ -68,14 +68,10 @@ class AlignInsDefense(BaseDefense):
             global_params, _ = split_model_state(global_model)
             global_vec = F.flatten_delta(global_params, keys, device=ctx.device)
             g_norm = global_vec.norm(p=2)
-
-            tda_scores: List[float] = []
-            for i in range(n):
-                denom = norms[i] * float(g_norm.item())
-                if denom <= self.eps:
-                    tda_scores.append(1.0)
-                else:
-                    tda_scores.append(float((torch.dot(delta_mat[i], global_vec) / denom).item()))
+            denom = norms * g_norm
+            dots = delta_mat @ global_vec
+            tda_t = torch.where(denom <= self.eps, torch.ones_like(dots), dots / denom.clamp_min(self.eps))
+            tda_scores = tda_t.tolist()
 
             principal_sign = torch.sign(torch.sign(delta_mat).sum(dim=0))
             if bool((principal_sign == 0).any()):
@@ -95,25 +91,20 @@ class AlignInsDefense(BaseDefense):
                 if tz <= self.tda_threshold and mz <= self.mpsa_threshold
             ] or list(range(n))
 
-        benign_norms = [norms[i] for i in benign_idx]
-        clip_value = float(torch.median(torch.tensor(benign_norms)).item()) if benign_norms else 0.0
+        benign_norms = norms[benign_idx]
+        clip_value = float(torch.median(benign_norms).item()) if benign_norms.numel() > 0 else 0.0
 
-        benign_deltas = [updates[i].param_delta for i in benign_idx]
-        clipped = F.clip_deltas_by_norm(
-            benign_deltas,
-            max_norm=clip_value,
-            norms=benign_norms,
-            device=ctx.device,
+        param_delta = F.clip_and_average_flat(
+            delta_mat,
+            benign_idx,
+            clip_value,
+            updates[0].param_delta,
+            keys,
+            norms=norms,
             eps=self.eps,
         )
-        param_delta = F.weighted_average_dicts(clipped, [1.0] * len(clipped), device=ctx.device)
+        buffers = F.average_buffers(updates, benign_idx, device=ctx.device)
 
-        benign_buffers = [updates[i].buffers for i in benign_idx if updates[i].buffers]
-        buffers = (
-            F.weighted_average_dicts(benign_buffers, [1.0] * len(benign_buffers), device=ctx.device)
-            if benign_buffers
-            else None
-        )
         return DefenseOutput(
             param_delta=param_delta,
             buffers=buffers,

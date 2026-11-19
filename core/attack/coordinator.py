@@ -8,8 +8,9 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from core.attack.base import BaseAttacker, build_attacker
 from core.attack.data.poisoner import BasePoisoner, DBAPoisoner
-from core.config import AttackConfig, AttackStrategyConfig
 from core.types import ClientUpdate, TrainConfig
+from core.utils.config import AttackConfig, AttackStrategyConfig
+from core.utils.registry import ATTACK_REGISTRY
 
 
 @dataclass
@@ -50,6 +51,7 @@ class AttackCoordinator:
         self.client_strategy_map: Dict[int, AttackStrategyConfig] = {}
         self._attacker_states: Dict[int, Dict[str, Any]] = {}
         self.eval_poisoner: Optional[BasePoisoner] = None
+        self.uses_prev_global_delta: bool = False
 
         if self.cfg.enabled:
             self._assign_compromised_clients()
@@ -72,9 +74,13 @@ class AttackCoordinator:
                 self.client_strategy_map[cid] = strategy
             cursor = end
 
-        # Build global evaluation poisoner from the primary attack strategy.
+        # Build global evaluation poisoner & check whether any strategy needs prev_global_delta.
         primary_attacker: BaseAttacker = build_attacker(self.cfg.strategies[0], seed=self.seed)
         self.eval_poisoner = primary_attacker.poisoner
+        self.uses_prev_global_delta = any(
+            bool(getattr(ATTACK_REGISTRY.get(s.name), "needs_prev_global_delta", False))
+            for s in self.cfg.strategies
+        )
 
     @property
     def enabled(self) -> bool:
@@ -153,13 +159,14 @@ class AttackCoordinator:
                     if self.cfg.malicious_epochs is not None
                     else base_train_cfg
                 )
+                saved_state = self._attacker_states.get(cid)
                 tasks.append(
                     ParticipantTask(
                         client_id=cid,
                         is_malicious=True,
                         train_cfg=t_cfg,
                         strategy=strategy,
-                        state=copy.deepcopy(self._attacker_states.get(cid, {})),
+                        state=copy.deepcopy(saved_state) if saved_state else {},
                         dba_block_map=dba_block_map,
                     )
                 )

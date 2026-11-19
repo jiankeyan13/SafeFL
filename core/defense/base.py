@@ -2,22 +2,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Mapping
+from typing import Any, List
 
 import torch.nn as nn
 
-from core.config import ComponentConfig
 from core.defense import functional as F
 from core.types import ClientUpdate, DefenseOutput, ServerContext
+from core.utils.config import ComponentConfig
 from core.utils.registry import DEFENSE_REGISTRY
 
 
 class BaseDefense(ABC):
-    """Base class for all server-side defenses (1 defense = 1 file).
-
-    Replaces the fragmented v1 ``Screener + Aggregator + Refiner + Algorithm``
-    4-file split and untyped ``context`` dict with a single clean ``defend`` method.
-    """
+    """Base class for all server-side defenses (1 defense = 1 file)."""
 
     def __init__(self, **_: Any) -> None:
         pass
@@ -56,23 +52,8 @@ class FedAvgDefense(BaseDefense):
         return DefenseOutput(param_delta=param_delta, buffers=buffers)
 
 
-def flatten_legacy_defense_params(raw_params: Mapping[str, Any]) -> Dict[str, Any]:
-    """Flatten legacy ``screener / aggregator / refiner`` YAML sections into flat kwargs."""
-    flat: Dict[str, Any] = {}
-    nested_sections = {"screener", "aggregator", "refiner"}
-    for key, value in raw_params.items():
-        if key in nested_sections and isinstance(value, Mapping):
-            inner = value.get("params") if isinstance(value.get("params"), Mapping) else value
-            flat.update(inner)
-        elif key == "client" and isinstance(value, Mapping):
-            continue
-        else:
-            flat[key] = value
-    return flat
-
-
 def build_defense(cfg: ComponentConfig, *, seed: int = 42) -> BaseDefense:
     """Instantiate a registered ``BaseDefense`` from ``ComponentConfig``."""
-    params = flatten_legacy_defense_params(cfg.params)
+    params = dict(cfg.params)
     params.setdefault("seed", int(seed))
-    return DEFENSE_REGISTRY.build(cfg.name.strip().lower(), **params)
+    return DEFENSE_REGISTRY.build(cfg.name, **params)

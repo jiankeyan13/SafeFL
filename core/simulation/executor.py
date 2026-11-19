@@ -9,16 +9,17 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import torch
 
 from core.attack.coordinator import ParticipantTask, instantiate_task_attacker
-from core.client.benign_client import BenignClient
-from core.config import ComponentConfig, ParallelConfig
+from core.simulation.client import BenignClient
 from core.types import (
     ClientContext,
     ClientUpdate,
     ServerBroadcast,
+    StateDict,
     load_model_state,
-    split_model_state,
+    to_cpu_tree,
 )
-from core.utils.registry import MODEL_REGISTRY
+from core.utils.config import ComponentConfig, ParallelConfig
+from core.utils.registry import MODEL_REGISTRY, bootstrap_registries
 from data.hub import DataHub
 from data.spec import FederatedDataSpec
 
@@ -60,8 +61,6 @@ class ClientWorker:
         is_remote: bool = False,
     ) -> None:
         if is_remote:
-            from core.bootstrap import bootstrap_registries
-
             bootstrap_registries()
             if torch.cuda.is_available():
                 self.device = torch.device("cuda:0")
@@ -84,22 +83,51 @@ class ClientWorker:
         *,
         export_cpu: bool = False,
     ) -> List[TaskResult]:
+        if not tasks:
+            return []
+
+        # Stage global params & buffers onto self.device ONCE per batch rather than per client.
+        dev_params: StateDict = {
+            k: (v if v.device == self.device else v.to(self.device, non_blocking=True)).detach()
+            for k, v in broadcast.params.items()
+        }
+        dev_buffers: StateDict = {
+            k: (v if v.device == self.device else v.to(self.device, non_blocking=True)).detach()
+            for k, v in broadcast.buffers.items()
+        }
+        dev_prev_delta: Optional[StateDict] = (
+            {
+                k: (v if v.device == self.device else v.to(self.device, non_blocking=True)).detach()
+                for k, v in broadcast.prev_delta.items()
+            }
+            if broadcast.prev_delta is not None
+            else None
+        )
+        dev_broadcast = ServerBroadcast(
+            round_idx=broadcast.round_idx,
+            params=dev_params,
+            buffers=dev_buffers,
+            lr=broadcast.lr,
+            prev_delta=dev_prev_delta,
+            extra=broadcast.extra,
+        )
+
         results: List[TaskResult] = []
         for task in tasks:
             for p in self.model.parameters():
                 p.requires_grad = True
-            load_model_state(self.model, broadcast.params, broadcast.buffers)
-            init_params, init_buffers = split_model_state(self.model)
+            load_model_state(self.model, dev_params, dev_buffers)
 
             ctx = ClientContext(
                 client_id=task.client_id,
                 device=self.device,
                 model=self.model,
-                initial_params=init_params,
-                initial_buffers=init_buffers,
+                initial_params=dev_params,
+                initial_buffers=dev_buffers,
                 data=self.hub.client(task.client_id),
                 train_cfg=task.train_cfg,
-                broadcast=broadcast,
+                broadcast=dev_broadcast,
+                seed=self.seed,
                 state=task.state,
                 run_dir=self.run_dir,
             )
@@ -107,7 +135,11 @@ class ClientWorker:
             if task.is_malicious:
                 attacker = instantiate_task_attacker(task, seed=self.seed)
                 update = attacker.step(ctx)
-                next_state: Optional[Dict[str, Any]] = ctx.state
+                next_state: Optional[Dict[str, Any]] = (
+                    (to_cpu_tree(ctx.state) if export_cpu else ctx.state)
+                    if ctx.state
+                    else None
+                )
             else:
                 update = self.benign_client.step(ctx)
                 next_state = None
@@ -246,7 +278,6 @@ class RayExecutor(BaseExecutor):
         ]
         batches: List[List[TaskResult]] = ray.get(futures) if futures else []
 
-        # Restore deterministic input task ordering regardless of actor count.
         by_cid: Dict[int, TaskResult] = {}
         for batch in batches:
             for item in batch:

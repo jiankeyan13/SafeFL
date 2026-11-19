@@ -121,6 +121,7 @@ class DeepSightDefense(BaseDefense):
         tes = torch.sum(neup >= thresh.unsqueeze(1), dim=1).to(torch.int).cpu().tolist()
         return neup.detach().cpu().numpy(), tes
 
+    @torch.no_grad()
     def _calc_ddifs(
         self,
         updates: List[ClientUpdate],

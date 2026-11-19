@@ -1,4 +1,4 @@
-"""Configuration schema for SafeFL v2."""
+"""Unified runtime configuration schema and Hydra converter for SafeFL v2."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -10,7 +10,7 @@ from core.types import TrainConfig
 
 
 def parse_train_config(raw: Optional[Dict[str, Any]]) -> TrainConfig:
-    """Parse ``client:`` YAML mapping directly into a flat ``TrainConfig``."""
+    """Parse ``client:`` YAML mapping directly into an immutable ``TrainConfig``."""
     if not raw:
         return TrainConfig()
 
@@ -25,7 +25,6 @@ def parse_train_config(raw: Optional[Dict[str, Any]]) -> TrainConfig:
         "criterion",
         "criterion_name",
         "grad_clip_norm",
-        "num_workers",  # ignored in v2 vectorized loader, excluded from extra
         "extra",
     }
     extra = dict(raw.get("extra") or {})
@@ -114,7 +113,7 @@ class TrainingConfig:
 
 @dataclass
 class DataConfig:
-    """Data hub & partitioning configuration."""
+    """DataHub & partitioning configuration."""
 
     dataset: str = "cifar10"
     root: str = "./data_source"
@@ -229,22 +228,24 @@ class LoggerConfig:
     use_tensorboard: bool = False
     use_csv: bool = False
     console_metrics: bool = False
-    save_interval: int = 10
 
     @classmethod
-    def from_dict(cls, raw: Optional[Dict[str, Any]], fallback_name: str = "experiment") -> "LoggerConfig":
+    def from_dict(
+        cls,
+        raw: Optional[Dict[str, Any]],
+        fallback_name: str = "experiment",
+    ) -> "LoggerConfig":
         if not raw:
             return cls(name=fallback_name)
         return cls(
             project=str(raw.get("project", "SafeFL")),
             name=str(raw.get("name", fallback_name)),
-            log_root=str(raw.get("log_root", raw.get("log_dir", "./logs"))),
+            log_root=str(raw.get("log_root", "./logs")),
             log_level=str(raw.get("log_level", "INFO")),
             use_wandb=bool(raw.get("use_wandb", False)),
             use_tensorboard=bool(raw.get("use_tensorboard", False)),
             use_csv=bool(raw.get("use_csv", False)),
             console_metrics=bool(raw.get("console_metrics", False)),
-            save_interval=int(raw.get("save_interval", 10)),
         )
 
 
@@ -258,8 +259,6 @@ class ParallelConfig:
 
     def __post_init__(self) -> None:
         b = str(self.backend).lower().strip()
-        if b == "sequential":
-            b = "local"
         if b not in {"local", "ray"}:
             raise ValueError(f"parallel.backend must be 'local' or 'ray', got {self.backend!r}")
         self.backend = b
@@ -305,15 +304,11 @@ class GlobalConfig:
         defense_raw = raw.get("defense") or raw.get("algorithm")
         logging_raw = raw.get("logging") if isinstance(raw.get("logging"), dict) else None
 
-        data_cfg = DataConfig.from_dict(raw.get("data"))
-        if "dataset" in raw and "data" not in raw:
-            data_cfg.dataset = str(raw["dataset"])
-
         return cls(
             experiment_name=exp_name,
             device=str(raw.get("device", "cuda" if torch.cuda.is_available() else "cpu")),
             seed=int(raw.get("seed", 42)),
-            data=data_cfg,
+            data=DataConfig.from_dict(raw.get("data")),
             training=TrainingConfig.from_dict(raw.get("training")),
             client=parse_train_config(raw.get("client")),
             model=ComponentConfig.from_dict(raw.get("model"), "resnet18"),
@@ -325,3 +320,19 @@ class GlobalConfig:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+def build_global_config(cfg: Any) -> GlobalConfig:
+    """Convert a Hydra ``DictConfig`` or plain ``dict`` into ``GlobalConfig``."""
+    from omegaconf import DictConfig, OmegaConf
+
+    if isinstance(cfg, DictConfig):
+        raw = OmegaConf.to_container(cfg, resolve=True)
+    else:
+        raw = dict(cfg)
+
+    if not isinstance(raw, dict):
+        raise TypeError("SafeFL config must resolve to a mapping.")
+
+    raw.pop("hydra", None)
+    return GlobalConfig.from_dict(raw)

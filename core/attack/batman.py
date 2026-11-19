@@ -231,9 +231,6 @@ class BatmanAttack(BaseAttacker):
         layer_selection_log_path: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        # Pop unused legacy stats args gracefully if present in old YAML configs.
-        kwargs.pop("stats_top_layers", None)
-        kwargs.pop("stats_layer_ratio", None)
         super().__init__(**kwargs)
         self.rank = int(rank)
         if lamda_reg is None and beta_reg is None and regularization is not None:
