@@ -1,6 +1,3 @@
 name: trim_mean
 params:
-  aggregator:
-    params:
-      # 两端各去除 20%
-      trim_ratio: 0.2
+  trim_ratio: 0.2

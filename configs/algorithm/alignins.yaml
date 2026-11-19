@@ -1,10 +1,6 @@
 name: alignins
 params:
-  screener:
-    params:
-      top_ratio: 0.3
-      tda_threshold: 1.0
-      mpsa_threshold: 1.0
-  aggregator:
-    params:
-      eps: 1.0e-12
+  top_ratio: 0.3
+  tda_threshold: 1.0
+  mpsa_threshold: 1.0
+  eps: 1.0e-12
