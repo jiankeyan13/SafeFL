@@ -1,0 +1,11 @@
+# @package _global_
+dataset: fashionmnist
+data:
+  dataset: fashionmnist
+  root: ./data_source
+  enable_proxy: false
+
+model:
+  params:
+    num_classes: 10
+    input_channels: 1

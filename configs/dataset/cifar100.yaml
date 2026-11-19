@@ -1,0 +1,11 @@
+# @package _global_
+dataset: cifar100
+data:
+  dataset: cifar100
+  root: ./data_source
+  enable_proxy: false
+
+# 须在 defaults 中让 dataset 排在 model 之后, 此处才能覆盖 resnet18 的 num_classes
+model:
+  params:
+    num_classes: 100

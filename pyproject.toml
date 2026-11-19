@@ -1,0 +1,26 @@
+[project]
+name = "safefl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "numpy>=1.21.0,<2.0.0",
+    "Pillow>=9.0.0",
+    "tqdm>=4.62.0",
+    "matplotlib>=3.7.0",
+    "hdbscan>=0.8.33",
+    "scipy",
+    "scikit-learn>=1.0.0",
+    "wandb>=0.15.0",
+    "hydra-core>=1.3.2",
+    "PyYAML>=6.0",
+    "ray>=2.9.0",
+]
+
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true

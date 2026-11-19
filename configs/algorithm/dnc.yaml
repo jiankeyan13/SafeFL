@@ -1,0 +1,7 @@
+name: dnc
+params:
+  screener:
+    params:
+      sub_dim: 10000
+      num_iters: 3
+      num_outliers: 1

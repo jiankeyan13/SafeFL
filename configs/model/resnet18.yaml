@@ -1,0 +1,4 @@
+name: resnet18
+params:
+  num_classes: 10
+  input_channels: 3

@@ -1,0 +1,6 @@
+name: freqfed
+params:
+  screener:
+    params:
+      min_samples: 1
+      allow_single_cluster: true

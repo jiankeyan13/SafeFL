@@ -1,0 +1,8 @@
+name: rfa
+params:
+  aggregator:
+    params:
+      # Weiszfeld 迭代次数 T
+      num_iters: 4
+      # 平滑参数 ν
+      nu: 1.0e-6

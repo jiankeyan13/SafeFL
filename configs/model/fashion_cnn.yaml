@@ -1,0 +1,7 @@
+name: fashion_cnn
+params:
+  num_classes: 10
+  input_channels: 1
+  conv1_channels: 32
+  conv2_channels: 64
+  fc_hidden: 128

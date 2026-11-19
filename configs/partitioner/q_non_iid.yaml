@@ -1,0 +1,4 @@
+# @package data.partitioner
+name: q_non_iid
+params:
+  q: 0.5

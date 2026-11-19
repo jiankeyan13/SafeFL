@@ -1,0 +1,6 @@
+name: foolsgold
+params:
+  screener:
+    params:
+      use_history: true
+      logit_center: 0.5
