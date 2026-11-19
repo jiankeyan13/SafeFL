@@ -1,6 +1,20 @@
-# Simulation package
-from .base_runner import BaseRunner
-from .runner import Runner
-from .ray_executor import RayTrainingExecutor, resolve_gpu_ids
+"""Simulation and homomorphic execution package for SafeFL v2."""
+from __future__ import annotations
 
-__all__ = ["BaseRunner", "Runner", "RayTrainingExecutor", "resolve_gpu_ids"]
+from core.simulation.executor import (
+    BaseExecutor,
+    ClientWorker,
+    LocalExecutor,
+    RayExecutor,
+    create_executor,
+)
+from core.simulation.runner import Runner
+
+__all__ = [
+    "BaseExecutor",
+    "ClientWorker",
+    "LocalExecutor",
+    "RayExecutor",
+    "Runner",
+    "create_executor",
+]

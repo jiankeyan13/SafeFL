@@ -18,4 +18,3 @@ client:
   criterion_name: CrossEntropyLoss
   epochs: 3
   batch_size: 64
-  num_workers: 0
