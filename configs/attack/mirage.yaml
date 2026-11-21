@@ -1,0 +1,17 @@
+enabled: true
+malicious_fraction: 0.1
+per_round_fraction: 0.1
+malicious_epochs: 3
+strategies:
+  - name: mirage
+    fraction: 1.0
+    params:
+      blend_alpha: 0.3
+      discriminator_train_samples_per_class: 50
+      discriminator_batch_size: 64
+      discriminator_lr: 0.01
+      discriminator_momentum: 0.9
+      discriminator_weight_decay: 0.0005
+      discriminator_epochs: 30
+      trigger_search_steps: 50
+      trigger_lr: 0.001

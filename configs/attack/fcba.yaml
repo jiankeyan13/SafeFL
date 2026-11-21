@@ -1,0 +1,10 @@
+enabled: true
+malicious_fraction: 0.1
+per_round_fraction: 0.1
+malicious_epochs: 3
+strategies:
+  - name: fcba
+    fraction: 1.0
+    params:
+      num_blocks: 4
+      scale: 1.0

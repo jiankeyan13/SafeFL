@@ -13,6 +13,8 @@ from core.defense import (
     multi_krum,
     rfa,
     rlr,
+    snowball,
+    spmc,
     trim_mean,
 )
 from core.defense.base import BaseDefense, FedAvgDefense, build_defense
@@ -32,5 +34,7 @@ __all__ = [
     "multi_krum",
     "rfa",
     "rlr",
+    "snowball",
+    "spmc",
     "trim_mean",
 ]

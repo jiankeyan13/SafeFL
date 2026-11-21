@@ -1,0 +1,10 @@
+name: snowball
+params:
+  ct: 10
+  vt: 0.5
+  v_step: 0.05
+  vae_hidden: 256
+  vae_latent: 64
+  vae_initial: 270
+  vae_tuning: 30
+  warmup_rounds: 100
