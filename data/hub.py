@@ -1,8 +1,9 @@
 """Top-level DataHub assembling sources, partitions, and zero-copy client/server views."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING, List, Optional, Sequence, Union
 
+import numpy as np
 import torch
 
 from data.loader import DataView
@@ -41,6 +42,8 @@ class DataHub:
         data_config: "DataConfig",
         num_clients: int,
         seed: int = 42,
+        *,
+        exclude_train_indices: Optional[Sequence[int] | np.ndarray] = None,
     ) -> "DataHub":
         """Build dataset caches (if needed), partition labels, and return ``DataHub``."""
         import data.datasets  # noqa: F401 - ensure built-in datasets are registered
@@ -57,6 +60,7 @@ class DataHub:
             seed=seed,
             enable_proxy=data_config.enable_proxy,
             proxy_per_class=data_config.proxy_per_class,
+            exclude_indices=exclude_train_indices,
         )
 
         fed_spec = FederatedDataSpec(

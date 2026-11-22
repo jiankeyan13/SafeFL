@@ -39,6 +39,7 @@ class RFADefense(BaseDefense):
             device=ctx.device,
         )
         y = (mat * alpha.unsqueeze(1)).sum(dim=0) / alpha.sum().clamp_min(1e-12)
+        beta = alpha
 
         for _ in range(self.num_iters):
             dists = torch.norm(mat - y.unsqueeze(0), dim=1).clamp_min(self.nu)
@@ -46,4 +47,9 @@ class RFADefense(BaseDefense):
             y = (mat * beta.unsqueeze(1)).sum(dim=0) / beta.sum().clamp_min(1e-12)
 
         param_delta = F.unflatten_delta(y, updates[0].param_delta, keys)
-        return DefenseOutput(param_delta=param_delta, buffers=F.median_buffers(updates, ctx.device))
+        beta_list = beta.tolist()
+        return DefenseOutput(
+            param_delta=param_delta,
+            buffers=F.median_buffers(updates, ctx.device),
+            client_weights={u.client_id: float(w) for u, w in zip(updates, beta_list)},
+        )

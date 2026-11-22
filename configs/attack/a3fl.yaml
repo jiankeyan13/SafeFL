@@ -1,0 +1,20 @@
+enabled: true
+malicious_fraction: 0.1
+per_round_fraction: 0.1
+malicious_epochs: 3
+strategies:
+  - name: a3fl
+    fraction: 1.0
+    params:
+      patch_size: 5
+      patch_location: bottom_right
+      init_value: 0.5
+      trigger_lr: 0.01
+      trigger_steps: 20
+      adv_model_count: 1
+      adv_epochs: 5
+      adv_lr: 0.01
+      adv_momentum: 0.9
+      adv_weight_decay: 0.0005
+      adv_lambda: 1.0
+      scale_factor: 1.0

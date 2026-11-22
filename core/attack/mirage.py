@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
@@ -41,6 +41,11 @@ class MiragePoisoner(BasePoisoner):
         if self.trigger is None or tuple(self.trigger.shape) != tuple(shape):
             self.trigger = torch.full(tuple(shape), 0.5, dtype=torch.float32, device="cpu")
         return self.trigger.to(device=device, dtype=torch.float32)
+
+    def load_state(self, state: Mapping[str, Any]) -> None:
+        trig = state.get("trigger")
+        if torch.is_tensor(trig):
+            self.trigger = trig.detach().cpu().clone()
 
     def _blend(self, bx: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor:
         trig = self.ensure_trigger(bx.shape[1:], bx.device).unsqueeze(0)
@@ -121,11 +126,7 @@ class MirageAttack(BaseAttacker):
         trigger_lr: float = 0.001,
         **kwargs: Any,
     ) -> None:
-        if "poisoner" not in kwargs or kwargs["poisoner"] is None:
-            poisoner_keys = {"target_label", "poison_ratio", "seed", "exclude_target_class"}
-            p_kwargs = {k: kwargs.pop(k) for k in list(kwargs.keys()) if k in poisoner_keys}
-            kwargs["poisoner"] = MiragePoisoner(blend_alpha=float(blend_alpha), **p_kwargs)
-        super().__init__(**kwargs)
+        super().__init__(blend_alpha=float(blend_alpha), **kwargs)
         self.blend_alpha = float(blend_alpha)
         self.target_labels = [int(x) for x in target_labels] if target_labels else None
         self.disc_samples_per_class = int(discriminator_train_samples_per_class)
@@ -136,6 +137,9 @@ class MirageAttack(BaseAttacker):
         self.disc_epochs = int(discriminator_epochs)
         self.trigger_search_steps = int(trigger_search_steps)
         self.trigger_lr = float(trigger_lr)
+
+    def _build_default_poisoner(self, base_kwargs: Dict[str, Any]) -> MiragePoisoner:
+        return MiragePoisoner(**base_kwargs)
 
     def _resolve_target_label(self, ctx: ClientContext) -> int:
         if self.target_labels:
@@ -276,6 +280,8 @@ class MirageAttack(BaseAttacker):
     def step(self, ctx: ClientContext) -> ClientUpdate:
         target_label = self._resolve_target_label(ctx)
         self.poisoner.target_label = target_label
+        if isinstance(self.poisoner, MiragePoisoner):
+            self.poisoner.load_state(ctx.state)
 
         clean_batches = [(bx.detach().cpu(), by.detach().cpu()) for bx, by in ctx.loader(shuffle=False)]
         if clean_batches and isinstance(self.poisoner, MiragePoisoner):
@@ -283,6 +289,7 @@ class MirageAttack(BaseAttacker):
             init_trig = self.poisoner.ensure_trigger(sample_shape, ctx.device)
             opt_trig = self._search_trigger(ctx.model, clean_batches, init_trig, target_label, ctx.device)
             self.poisoner.trigger = opt_trig
+            ctx.state["trigger"] = opt_trig.clone()
 
         stats = train_model(ctx.model, ctx.loader(poisoner=self.poisoner), ctx.train_cfg)
         return ctx.pack_update(metrics={"loss": stats.loss})

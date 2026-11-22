@@ -8,7 +8,7 @@ import torch.nn as nn
 from scipy.spatial.distance import cdist
 from sklearn.utils.extmath import randomized_svd
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import ClientUpdate, DefenseOutput, ServerContext
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
@@ -120,7 +120,11 @@ class RFLBATDefense(BaseDefense):
         n = len(updates)
         if n < 2:
             param_delta, buffers = F.aggregate_updates(updates, device=ctx.device)
-            return DefenseOutput(param_delta=param_delta, buffers=buffers)
+            return DefenseOutput(
+                param_delta=param_delta,
+                buffers=buffers,
+                client_weights=build_client_weights(updates),
+            )
 
         mat_t, _ = F.stack_flat_deltas(updates)
         high_dim = mat_t.cpu().numpy().astype(np.float64, copy=False)
@@ -146,4 +150,5 @@ class RFLBATDefense(BaseDefense):
             param_delta=param_delta,
             buffers=buffers,
             metrics={"defense/kept_clients": float(len(kept))},
+            client_weights=build_client_weights(updates, kept_updates=kept),
         )

@@ -6,7 +6,7 @@ from typing import Any, List
 import torch
 import torch.nn as nn
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import ClientUpdate, DefenseOutput, ServerContext, split_model_state
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
@@ -41,6 +41,7 @@ class SPMCDefense(BaseDefense):
                 param_delta=param_delta,
                 buffers=buffers,
                 metrics={"defense/kept_clients": float(n)},
+                client_weights=build_client_weights(updates),
             )
 
         global_params, _ = split_model_state(global_model)
@@ -69,4 +70,5 @@ class SPMCDefense(BaseDefense):
             param_delta=param_delta,
             buffers=buffers,
             metrics={"defense/kept_clients": float(n)},
+            client_weights={u.client_id: float(w) for u, w in zip(updates, elastic_weights)},
         )

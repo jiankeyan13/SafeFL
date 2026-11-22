@@ -37,6 +37,7 @@ class Server:
         self.rng = random.Random(int(seed))
         self.calibrate_bn_on_proxy = bool(calibrate_bn_on_proxy)
         self.last_aggregated_delta: Optional[StateDict] = None
+        self.last_client_weights: Optional[Dict[int, float]] = None
 
     def select_clients(self, client_ids: Sequence[int], num_select: int) -> List[int]:
         """Uniformly sample ``num_select`` participants from ``client_ids``."""
@@ -49,15 +50,26 @@ class Server:
         lr: float,
         *,
         include_prev_delta: bool = False,
+        ctx: Optional[ServerContext] = None,
     ) -> ServerBroadcast:
         """Package current global model state & round metadata into ``ServerBroadcast``."""
-        params, buffers = split_model_state(self.global_model)
+        override = self.defense.pre_broadcast(self.global_model, ctx) if ctx is not None else None
+        if override is not None:
+            params, buffers = override
+        else:
+            params, buffers = split_model_state(self.global_model)
+        extra = (
+            {"client_extras": tuple(self.defense.client_extras)}
+            if self.defense.client_extras
+            else {}
+        )
         return ServerBroadcast(
             round_idx=int(round_idx),
             params=params,
             buffers=buffers,
             lr=float(lr),
             prev_delta=self.last_aggregated_delta if include_prev_delta else None,
+            extra=extra,
         )
 
     def step(
@@ -67,9 +79,15 @@ class Server:
     ) -> Dict[str, float]:
         """Run ``self.defense`` on client updates and update ``self.global_model``."""
         if not updates:
+            self.last_client_weights = None
             return {}
 
         out = self.defense.defend(self.global_model, updates, ctx)
+        self.last_client_weights = (
+            {int(k): float(v) for k, v in out.client_weights.items()}
+            if out.client_weights is not None
+            else None
+        )
         apply_update_to_model(self.global_model, out.param_delta, out.buffers)
 
         if self.calibrate_bn_on_proxy and ctx.proxy_data is not None and len(ctx.proxy_data) > 0:

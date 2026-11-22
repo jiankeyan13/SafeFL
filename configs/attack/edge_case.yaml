@@ -1,0 +1,13 @@
+enabled: true
+malicious_fraction: 0.1
+per_round_fraction: 0.1
+malicious_epochs: 3
+strategies:
+  - name: edge_case
+    fraction: 1.0
+    params:
+      train_path: ./data_source/edge_case/southwest_images_new_train.pkl
+      test_path: ./data_source/edge_case/southwest_images_new_test.pkl
+      source_label: 0
+      target_label: 9
+      poison_ratio: 0.2

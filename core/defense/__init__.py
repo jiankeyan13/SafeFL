@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from core.defense import (
     alignins,
+    backdoor_indicator,
     deepsight,
     dnc,
+    fdcr,
     flame,
     fltrust,
     foolsgold,
@@ -23,9 +25,11 @@ __all__ = [
     "BaseDefense",
     "FedAvgDefense",
     "alignins",
+    "backdoor_indicator",
     "build_defense",
     "deepsight",
     "dnc",
+    "fdcr",
     "flame",
     "fltrust",
     "foolsgold",

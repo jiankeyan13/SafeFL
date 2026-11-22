@@ -14,7 +14,7 @@ from core.simulation.executor import BaseExecutor, create_executor
 from core.simulation.server import Server
 from core.types import ClientUpdate, ServerContext
 from core.utils.config import GlobalConfig
-from core.utils.evaluator import evaluate_backdoor, evaluate_clean
+from core.utils.evaluator import evaluate_backdoor, evaluate_clean, evaluate_defense_detection
 from core.utils.logger import Logger
 from core.utils.lr_schedule import get_lr_from_schedule
 from core.utils.registry import bootstrap_registries, build_model
@@ -49,27 +49,28 @@ class Runner:
             run_dir=run_dir,
         ).start()
 
-        # 1. Data Hub
+        # 1. Attack Coordinator (inactive no-op when attack.enabled=False)
+        self.coordinator = AttackCoordinator(
+            self.config.attack,
+            range(self.config.training.num_clients),
+            seed=self.seed,
+        )
+
+        # 2. Data Hub
         self.hub = DataHub.build(
             self.config.data,
             num_clients=self.config.training.num_clients,
             seed=self.seed,
+            exclude_train_indices=self.coordinator.excluded_train_indices,
         )
 
-        # 2. Server + Defense
+        # 3. Server + Defense
         global_model = build_model(self.config.model, self.hub.spec)
         defense = build_defense(self.config.defense, seed=self.seed)
         self.server = Server(
             model=global_model,
             device=self.device,
             defense=defense,
-            seed=self.seed,
-        )
-
-        # 3. Attack Coordinator (inactive no-op when attack.enabled=False)
-        self.coordinator = AttackCoordinator(
-            self.config.attack,
-            self.hub.client_ids,
             seed=self.seed,
         )
 
@@ -82,13 +83,8 @@ class Runner:
             device=self.device,
         )
         self.poisoned_eval_loader = (
-            self.hub.test().loader(
-                batch_size=eval_bs,
-                shuffle=False,
-                device=self.device,
-                poisoner=self.coordinator.eval_poisoner,
-                mode="eval",
-                return_orig_label=True,
+            self.coordinator.eval_poisoner.make_eval_loader(
+                self.hub, batch_size=eval_bs, device=self.device
             )
             if self.coordinator.eval_poisoner is not None
             else None
@@ -148,20 +144,6 @@ class Runner:
                 else:
                     self.logger.info(f"Selected {len(selected_ids)} clients: {selected_ids}")
 
-                # Step 2: Broadcast downlink packet (attaches prev_delta only when needed)
-                packet = self.server.broadcast(
-                    round_idx=round_idx,
-                    lr=round_lr,
-                    include_prev_delta=self.coordinator.uses_prev_global_delta,
-                )
-
-                # Step 3: Execute local/attack steps via LocalExecutor or RayExecutor
-                raw_results = self.executor.run_round(tasks, packet)
-
-                # Step 4: Persist cross-round attacker states & run optional collusion hook
-                updates = self.coordinator.finalize_round(round_idx, raw_results)
-
-                # Step 5: Server defense & global model update
                 train_spec = self.hub.spec.dataset.train
                 server_ctx = ServerContext(
                     round_idx=round_idx,
@@ -174,12 +156,34 @@ class Runner:
                     proxy_data=self.hub.proxy(),
                     run_dir=self.logger.run_dir,
                 )
+
+                # Step 2: Broadcast downlink packet (attaches prev_delta only when needed)
+                packet = self.server.broadcast(
+                    round_idx=round_idx,
+                    lr=round_lr,
+                    include_prev_delta=self.coordinator.uses_prev_global_delta,
+                    ctx=server_ctx,
+                )
+
+                # Step 3: Execute local/attack steps via LocalExecutor or RayExecutor
+                raw_results = self.executor.run_round(tasks, packet)
+
+                # Step 4: Persist cross-round attacker states & run optional collusion hook
+                updates = self.coordinator.finalize_round(round_idx, raw_results)
+
+                # Step 5: Server defense & global model update
                 defense_metrics = self.server.step(updates, server_ctx)
+                participant_malicious = {t.client_id: t.is_malicious for t in tasks}
+                detection_metrics = evaluate_defense_detection(
+                    participant_malicious,
+                    self.server.last_client_weights,
+                )
 
                 # Step 6: Aggregate round metrics & run global evaluation
                 round_metrics = self._aggregate_client_metrics(updates)
                 round_metrics["train/lr"] = round_lr
                 round_metrics.update(defense_metrics)
+                round_metrics.update(detection_metrics)
                 self.logger.log_metrics(round_metrics, step=round_idx)
 
                 eval_every = self.config.training.eval_interval

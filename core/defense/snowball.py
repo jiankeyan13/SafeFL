@@ -12,7 +12,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import calinski_harabasz_score
 from torch.utils.data import DataLoader, TensorDataset
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import ClientUpdate, DefenseOutput, ServerContext
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
@@ -170,12 +170,22 @@ class SnowballDefense(BaseDefense):
         n = len(updates)
         if n <= 2:
             param_delta, buffers = F.aggregate_updates(updates, weight_by_samples=True, device=ctx.device)
-            return DefenseOutput(param_delta=param_delta, buffers=buffers, metrics={"defense/kept_clients": float(n)})
+            return DefenseOutput(
+                param_delta=param_delta,
+                buffers=buffers,
+                metrics={"defense/kept_clients": float(n)},
+                client_weights=build_client_weights(updates, weight_by_samples=True),
+            )
 
         layer_keys = self._select_layer_keys(updates)
         if not layer_keys:
             param_delta, buffers = F.aggregate_updates(updates, weight_by_samples=True, device=ctx.device)
-            return DefenseOutput(param_delta=param_delta, buffers=buffers, metrics={"defense/kept_clients": float(n)})
+            return DefenseOutput(
+                param_delta=param_delta,
+                buffers=buffers,
+                metrics={"defense/kept_clients": float(n)},
+                client_weights=build_client_weights(updates, weight_by_samples=True),
+            )
 
         eff_ct = max(1, min(self.ct, n - 2))
         cnt = np.zeros(n, dtype=np.float64)
@@ -228,6 +238,7 @@ class SnowballDefense(BaseDefense):
                 param_delta=param_delta,
                 buffers=buffers,
                 metrics={"defense/kept_clients": float(len(kept))},
+                client_weights=build_client_weights(updates, kept_updates=kept, weight_by_samples=True),
             )
 
         flat_vecs = [
@@ -281,4 +292,5 @@ class SnowballDefense(BaseDefense):
             param_delta=param_delta,
             buffers=buffers,
             metrics={"defense/kept_clients": float(len(kept))},
+            client_weights=build_client_weights(updates, kept_updates=kept, weight_by_samples=True),
         )

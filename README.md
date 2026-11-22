@@ -18,6 +18,61 @@ SafeFL/
     └── utils/                   # 通用底座 (functional / trainer / evaluator / config / registry / logger / lr_schedule)
 ```
 
+## 支持算法
+
+### 攻击算法（Attack）
+
+| 名称 | Official Repo |
+| --- | --- |
+| 17arXiv_BadNets | [https://github.com/Kooscii/BadNets](https://github.com/Kooscii/BadNets) |
+| 17arXiv_Blend | - |
+| 20ICLR_DBA | [https://github.com/AI-secure/DBA](https://github.com/AI-secure/DBA) |
+| 20NeurIPS_PGD | [https://github.com/ksreenivasan/OOD_Federated_Learning](https://github.com/ksreenivasan/OOD_Federated_Learning) |
+| 22ICML_Neurotoxin | [https://github.com/jhcknzzm/Federated-Learning-Backdoor](https://github.com/jhcknzzm/Federated-Learning-Backdoor) |
+| 23AAAI_F3BA | [https://github.com/jinghuichen/Focused-Flip-Federated-Backdoor-Attack](https://github.com/jinghuichen/Focused-Flip-Federated-Backdoor-Attack) |
+| 23ICML_Chameleon | [https://github.com/ybdai7/Chameleon-durable-backdoor](https://github.com/ybdai7/Chameleon-durable-backdoor) |
+| 23NeurIPS_A3FL | [https://github.com/hfzhang31/A3FL](https://github.com/hfzhang31/A3FL) |
+| 24AAAI_FCBA | [https://github.com/PhD-TaoLiu/FCBA](https://github.com/PhD-TaoLiu/FCBA) |
+| 24ICLR_LP-Attack | [https://github.com/zhmzm/Poisoning_Backdoor-critical_Layers_Attack](https://github.com/zhmzm/Poisoning_Backdoor-critical_Layers_Attack) |
+| 25CVPR_Mirage | [https://github.com/NUAA-SmartSensing/Mirage](https://github.com/NUAA-SmartSensing/Mirage) |
+| 25ICCV_LGA | [https://github.com/yqqhyqq/LGA](https://github.com/yqqhyqq/LGA) |
+| 26CVPR_Batman | [https://github.com/WenddHe0119/Batman](https://github.com/WenddHe0119/Batman) |
+
+### 防御算法（Defense）
+
+| 名称 | Official Repo |
+| --- | --- |
+| 17AISTATS_FedAvg | - |
+| 17NeurIPS_Multi-Krum | [https://github.com/LPD-EPFL/AggregaThor](https://github.com/LPD-EPFL/AggregaThor) |
+| 18ICML_TrimmedMean | - |
+| 20RAID_FoolsGold | [https://github.com/DistributedML/FoolsGold](https://github.com/DistributedML/FoolsGold) |
+| 21AAAI_RLR | [https://github.com/TinfoilHat0/Defending-Against-Backdoors-with-Robust-Learning-Rate](https://github.com/TinfoilHat0/Defending-Against-Backdoors-with-Robust-Learning-Rate) |
+| 21NDSS_DnC | [https://github.com/vrt1shjwlkr/NDSS21-Model-Poisoning](https://github.com/vrt1shjwlkr/NDSS21-Model-Poisoning) |
+| 21NDSS_FLTrust | - |
+| 22AAAI_RFLBAT | - |
+| 22NDSS_DeepSight | - |
+| 22TSP_RFA | [https://github.com/krishnap25/rfa](https://github.com/krishnap25/rfa) |
+| 22USENIX_FLAME | - |
+| 24AAAI_Snowball | [https://github.com/zhenqincn/Snowball](https://github.com/zhenqincn/Snowball) |
+| 24NDSS_FreqFed | - |
+| 24NeurIPS_FDCR | [https://github.com/WenkeHuang/FDCR](https://github.com/WenkeHuang/FDCR) |
+| 24USENIX_BackdoorIndicator | [https://github.com/ybdai7/Backdoor-indicator-defense](https://github.com/ybdai7/Backdoor-indicator-defense) |
+| 25CVPR_AlignIns | [https://github.com/JiiahaoXU/AlignIns](https://github.com/JiiahaoXU/AlignIns) |
+| 25ICML_SPMC | [https://github.com/WenddHe0119/SPMC](https://github.com/WenddHe0119/SPMC) |
+| 25NeurIPS_MARS | [https://github.com/yunming181920/MARS](https://github.com/yunming181920/MARS) |
+
+### 3. 支持触发器类型（Trigger）
+
+| 名称 | 可选项 |
+| --- | --- |
+| 静态局部 | 白色像素（`Patch` / `BadNets`） |
+| 分布式 | `DBA`、`FCBA` |
+| 混合 | `Blend` |
+| 语义触发器 | `Semantic`（`cifar10_car_stripe` / `cifar10_green_car` / 自定义索引） |
+| 边缘触发器 | `Edge-case`（外部 `.pkl` / `.npy` / `.pt` / 图像目录） |
+| 动态优化 | `A3FL`、`F3BA` |
+| 自然语言文本 | 暂未实现 |
+
 ## 快速运行
 
 ```bash

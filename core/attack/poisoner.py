@@ -6,7 +6,7 @@ Operates directly on ``[B, C, H, W]`` tensors in physical ``[0, 1]`` pixel space
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -237,6 +237,35 @@ class BasePoisoner(BatchPoisoner, ABC):
         target_y = torch.full_like(orig_y, self.target_label)
         return bx, target_y, orig_y
 
+    def load_state(self, state: Mapping[str, Any]) -> None:
+        """Optional hook to sync dynamic trigger state from persisted attacker state."""
+        del state
+
+    def bind_data_source(self, source: Any) -> None:
+        """Optional hook called by ``FastBatchLoader`` to expose the active ``SharedDataSource``."""
+        del source
+
+    def excluded_train_indices(self) -> Sequence[int]:
+        """Optional train-split indices to exclude from benign client partitions."""
+        return ()
+
+    def make_eval_loader(
+        self,
+        hub: Any,
+        *,
+        batch_size: int,
+        device: torch.device,
+    ) -> Any:
+        """Build the global ASR eval loader (default: full ``hub.test()`` with ``self``)."""
+        return hub.test().loader(
+            batch_size=batch_size,
+            shuffle=False,
+            device=device,
+            poisoner=self,
+            mode="eval",
+            return_orig_label=True,
+        )
+
 
 @POISONER_REGISTRY.register("patch")
 @POISONER_REGISTRY.register("badnets")
@@ -438,6 +467,108 @@ class BlendPoisoner(BasePoisoner):
     ) -> torch.Tensor:
         del round_idx
         return self._blend(bx, mask=None)
+
+
+def stamp_patch_differentiable(
+    raw_x: torch.Tensor,
+    trigger: torch.Tensor,
+    location: str,
+    mean_t: torch.Tensor,
+    std_t: torch.Tensor,
+) -> torch.Tensor:
+    """Stamp ``trigger`` onto ``raw_x`` in ``[0, 1]`` space (differentiably) and normalize."""
+    h, w = int(raw_x.shape[-2]), int(raw_x.shape[-1])
+    ps = min(int(trigger.shape[-2]), int(trigger.shape[-1]), h, w)
+    r0, c0 = _patch_origin(location, h, w, ps)
+    patched = raw_x.clone()
+    patched[:, :, r0 : r0 + ps, c0 : c0 + ps] = (
+        trigger[:, :ps, :ps].to(dtype=raw_x.dtype).unsqueeze(0)
+    )
+    return (patched - mean_t) / std_t
+
+
+@POISONER_REGISTRY.register("learnable_patch")
+class LearnablePatchPoisoner(BasePoisoner):
+    """Localized corner-patch poisoner holding an optimizable ``[C, ps, ps]`` trigger tensor."""
+
+    def __init__(
+        self,
+        target_label: int = 5,
+        poison_ratio: float = 0.5,
+        patch_size: int = 5,
+        patch_location: str = "bottom_right",
+        init_value: float = 0.5,
+        seed: Optional[int] = 42,
+        exclude_target_class: bool = False,
+        **_: Any,
+    ) -> None:
+        if patch_location not in _VALID_LOCATIONS:
+            raise ValueError(f"Invalid location {patch_location!r}. Expected {_VALID_LOCATIONS}.")
+        if patch_size <= 0:
+            raise ValueError(f"patch_size must be positive, got {patch_size}")
+        super().__init__(
+            target_label=target_label,
+            poison_ratio=poison_ratio,
+            seed=seed,
+            exclude_target_class=exclude_target_class,
+        )
+        self.patch_size = int(patch_size)
+        self.patch_location = patch_location
+        self.init_value = float(init_value)
+        self.trigger: Optional[torch.Tensor] = None
+
+    def ensure_trigger(self, channels: int, device: torch.device) -> torch.Tensor:
+        expected = (int(channels), self.patch_size, self.patch_size)
+        if self.trigger is None or tuple(self.trigger.shape) != expected:
+            self.trigger = torch.full(
+                expected, self.init_value, dtype=torch.float32, device="cpu"
+            )
+        return self.trigger.to(device=device, dtype=torch.float32)
+
+    def load_state(self, state: Mapping[str, Any]) -> None:
+        trig = state.get("trigger")
+        if torch.is_tensor(trig):
+            self.trigger = trig.detach().cpu().clone()
+
+    def _stamp(self, bx: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor:
+        if bx.ndim != 4:
+            raise ValueError(f"Expected 4D [B, C, H, W] batch tensor, got shape {tuple(bx.shape)}")
+        if bx.shape[0] == 0 or (mask is not None and not bool(mask.any())):
+            return bx
+
+        h, w = int(bx.shape[-2]), int(bx.shape[-1])
+        ps = min(self.patch_size, h, w)
+        r0, c0 = _patch_origin(self.patch_location, h, w, ps)
+        trig = (
+            self.ensure_trigger(int(bx.shape[1]), bx.device)[:, :ps, :ps]
+            .to(dtype=bx.dtype)
+            .unsqueeze(0)
+        )
+        if mask is None:
+            bx[:, :, r0 : r0 + ps, c0 : c0 + ps] = trig
+        else:
+            bx[mask, :, r0 : r0 + ps, c0 : c0 + ps] = trig
+        return bx
+
+    def _stamp_train(
+        self,
+        bx: torch.Tensor,
+        mask: torch.Tensor,
+        *,
+        client_id: Optional[int] = None,
+        round_idx: Optional[int] = None,
+    ) -> torch.Tensor:
+        del client_id, round_idx
+        return self._stamp(bx, mask)
+
+    def _stamp_eval(
+        self,
+        bx: torch.Tensor,
+        *,
+        round_idx: Optional[int] = None,
+    ) -> torch.Tensor:
+        del round_idx
+        return self._stamp(bx, None)
 
 
 def build_poisoner(name: str = "patch", **params: Any) -> BasePoisoner:

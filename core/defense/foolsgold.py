@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import torch
 import torch.nn as nn
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import ClientUpdate, DefenseOutput, ServerContext
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
@@ -48,7 +48,11 @@ class FoolsGoldDefense(BaseDefense):
         del global_model
         if len(updates) < 2:
             param_delta, buffers = F.aggregate_updates(updates, device=ctx.device)
-            return DefenseOutput(param_delta=param_delta, buffers=buffers)
+            return DefenseOutput(
+                param_delta=param_delta,
+                buffers=buffers,
+                client_weights=build_client_weights(updates),
+            )
 
         keys = F.ordered_keys(updates[0].param_delta)
         feats: List[torch.Tensor] = []
@@ -76,4 +80,8 @@ class FoolsGoldDefense(BaseDefense):
         weights = (torch.log(clamped / (1.0 - clamped)) + self.logit_center).clamp(0.0, 1.0).tolist()
 
         param_delta, buffers = F.aggregate_updates(updates, weights=weights, device=ctx.device)
-        return DefenseOutput(param_delta=param_delta, buffers=buffers)
+        return DefenseOutput(
+            param_delta=param_delta,
+            buffers=buffers,
+            client_weights={u.client_id: float(w) for u, w in zip(updates, weights)},
+        )

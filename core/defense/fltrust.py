@@ -6,7 +6,7 @@ from typing import Any, List, Optional
 import torch
 import torch.nn as nn
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import (
     ClientUpdate,
     DefenseOutput,
@@ -87,6 +87,7 @@ class FLTrustDefense(BaseDefense):
                 param_delta=F.zero_delta_like(updates[0].param_delta, device=ctx.device),
                 buffers=None,
                 metrics={"defense/accepted_clients": 0.0, "defense/ref_norm": ref_norm},
+                client_weights=build_client_weights(updates, kept_indices=[]),
             )
 
         norms = torch.norm(delta_mat, p=2, dim=1)
@@ -104,6 +105,7 @@ class FLTrustDefense(BaseDefense):
                 param_delta=F.zero_delta_like(updates[0].param_delta, device=ctx.device),
                 buffers=None,
                 metrics={"defense/accepted_clients": 0.0, "defense/ref_norm": ref_norm},
+                client_weights=build_client_weights(updates, kept_indices=[]),
             )
 
         # Each accepted client's normalized contribution is: ts_i * ((ref_norm / norm_i) * delta_i)
@@ -116,11 +118,17 @@ class FLTrustDefense(BaseDefense):
         kept_ts = ts[keep_mask].tolist()
         buffers = F.average_buffers(updates, kept_idx, weights=kept_ts, device=ctx.device)
 
+        ts_list = ts.tolist()
+        keep_list = keep_mask.tolist()
         return DefenseOutput(
             param_delta=param_delta,
             buffers=buffers,
             metrics={
                 "defense/accepted_clients": float(len(kept_idx)),
                 "defense/ref_norm": ref_norm,
+            },
+            client_weights={
+                u.client_id: (float(w) if kept else 0.0)
+                for u, w, kept in zip(updates, ts_list, keep_list)
             },
         )

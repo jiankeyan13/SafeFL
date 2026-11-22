@@ -1,8 +1,10 @@
 """Zero-copy CHW uint8 memory-mapped & optional VRAM-resident data sources."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import pickle
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -323,3 +325,120 @@ class SharedDataSource:
             self._norm_cache[key] = cached
         mean_t, std_t = cached
         return bx.sub_(mean_t).div_(std_t)
+
+
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+
+
+class _RawExternalDataset:
+    """Adapter exposing external image collections to ``ensure_chw_mmap_cache``."""
+
+    def __init__(self, items: Any, targets: Optional[np.ndarray] = None) -> None:
+        self._items = items
+        self._n = len(items)
+        self._targets = (
+            np.asarray(targets, dtype=np.int64)
+            if targets is not None
+            else np.zeros(self._n, dtype=np.int64)
+        )
+        if isinstance(items, np.ndarray) and items.dtype == np.uint8 and items.ndim in (3, 4):
+            self.data = items
+            self.targets = self._targets
+
+    def __len__(self) -> int:
+        return self._n
+
+    def __getitem__(self, idx: int) -> Tuple[Any, int]:
+        return self._items[idx], int(self._targets[idx])
+
+
+def _load_external_items(path: str, default_label: int) -> _RawExternalDataset:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"External dataset path not found: {path!r}")
+
+    if os.path.isdir(path):
+        from PIL import Image
+
+        files = sorted(
+            os.path.join(path, fname)
+            for fname in os.listdir(path)
+            if fname.lower().endswith(_IMAGE_EXTS)
+        )
+        if not files:
+            raise ValueError(f"No image files found in directory: {path!r}")
+        images = [np.asarray(Image.open(fp).convert("RGB"), dtype=np.uint8) for fp in files]
+        arr = np.stack(images, axis=0)
+        return _RawExternalDataset(arr, np.full(len(arr), int(default_label), dtype=np.int64))
+
+    lower = path.lower()
+    obj: Any
+    if lower.endswith((".pkl", ".pickle")):
+        with open(path, "rb") as f:
+            obj = pickle.load(f)
+    elif lower.endswith(".npy"):
+        obj = np.load(path, allow_pickle=True)
+    elif lower.endswith(".npz"):
+        npz = np.load(path, allow_pickle=True)
+        if "data" in npz:
+            imgs = npz["data"]
+        elif "images" in npz:
+            imgs = npz["images"]
+        else:
+            imgs = npz[npz.files[0]]
+        lbls = npz["targets"] if "targets" in npz else npz.get("labels")
+        obj = (imgs, lbls) if lbls is not None else imgs
+    elif lower.endswith((".pt", ".pth")):
+        obj = torch.load(path, map_location="cpu", weights_only=False)
+    else:
+        raise ValueError(f"Unsupported external dataset format: {path!r}")
+
+    targets: Optional[np.ndarray] = None
+    if isinstance(obj, dict):
+        imgs = obj.get("data", obj.get("images"))
+        if imgs is None:
+            raise ValueError(f"Dict in {path!r} must contain 'data' or 'images'.")
+        lbls = obj.get("targets", obj.get("labels"))
+        if lbls is not None:
+            targets = np.asarray(lbls, dtype=np.int64)
+        obj = imgs
+    elif isinstance(obj, tuple) and len(obj) == 2:
+        obj, lbls = obj
+        if lbls is not None:
+            targets = np.asarray(lbls, dtype=np.int64)
+
+    if targets is None:
+        targets = np.full(len(obj), int(default_label), dtype=np.int64)
+
+    if isinstance(obj, list) and obj and isinstance(obj[0], np.ndarray):
+        try:
+            obj = np.stack(obj, axis=0)
+        except ValueError:
+            pass
+
+    return _RawExternalDataset(obj, targets)
+
+
+def load_external_data_source(
+    path: str,
+    *,
+    default_label: int = 0,
+    cache_dir: Optional[str] = None,
+    split: str = "external",
+) -> SharedDataSource:
+    """Load an external image folder or tensor/array file into a cached ``SharedDataSource``."""
+    abs_path = os.path.abspath(path)
+    base_cache_dir = cache_dir or os.path.join(os.path.dirname(abs_path), ".safefl_cache")
+    digest = hashlib.md5(f"{abs_path}|{int(default_label)}".encode("utf-8")).hexdigest()[:12]
+    cache_prefix = os.path.join(base_cache_dir, f"ext_{split}_{digest}")
+
+    split_spec = ensure_chw_mmap_cache(
+        lambda: _load_external_items(abs_path, int(default_label)),
+        cache_prefix,
+        name=f"ext_{digest}",
+        split=split,
+        num_classes=max(10, int(default_label) + 1),
+        mean=(0.0,),
+        std=(1.0,),
+        default_augment=None,
+    )
+    return SharedDataSource(split_spec)

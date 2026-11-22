@@ -7,7 +7,7 @@ import numpy as np
 import torch.nn as nn
 from sklearn.utils.extmath import randomized_svd
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import ClientUpdate, DefenseOutput, ServerContext
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
@@ -76,4 +76,5 @@ class DnCDefense(BaseDefense):
             param_delta=param_delta,
             buffers=buffers,
             metrics={"defense/kept_clients": float(len(kept))},
+            client_weights=build_client_weights(updates, kept_updates=kept),
         )

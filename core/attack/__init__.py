@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from core.attack import (
+    a3fl,
     badnets_dual,
     batman,
     chameleon,
+    data_poisoners,
+    f3ba,
     fcba,
     lga,
     lp,
@@ -19,13 +22,17 @@ from core.attack.base import (
     BaseAttacker,
     BlendAttack,
     DBAAttack,
+    EdgeCaseAttack,
+    SemanticAttack,
     build_attacker,
 )
+from core.attack.data_poisoners import EdgeCasePoisoner, SemanticPoisoner
 from core.attack.poisoner import (
     POISONER_REGISTRY,
     BasePoisoner,
     BlendPoisoner,
     DBAPoisoner,
+    LearnablePatchPoisoner,
     PatchPoisoner,
     build_poisoner,
 )
@@ -38,13 +45,21 @@ __all__ = [
     "BlendPoisoner",
     "DBAAttack",
     "DBAPoisoner",
+    "EdgeCaseAttack",
+    "EdgeCasePoisoner",
+    "LearnablePatchPoisoner",
     "POISONER_REGISTRY",
     "PatchPoisoner",
+    "SemanticAttack",
+    "SemanticPoisoner",
+    "a3fl",
     "badnets_dual",
     "batman",
     "build_attacker",
     "build_poisoner",
     "chameleon",
+    "data_poisoners",
+    "f3ba",
     "fcba",
     "lga",
     "lp",

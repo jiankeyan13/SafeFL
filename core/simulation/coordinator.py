@@ -50,6 +50,8 @@ class AttackCoordinator:
         self.client_strategy_map: Dict[int, AttackStrategyConfig] = {}
         self._attacker_states: Dict[int, Dict[str, Any]] = {}
         self.eval_poisoner: Optional[BasePoisoner] = None
+        self.excluded_train_indices: List[int] = []
+        self._primary_strategy: Optional[AttackStrategyConfig] = None
         self.uses_prev_global_delta: bool = False
 
         if self.cfg.enabled:
@@ -73,8 +75,12 @@ class AttackCoordinator:
                 self.client_strategy_map[cid] = strategy
             cursor = end
 
-        primary_attacker: BaseAttacker = build_attacker(self.cfg.strategies[0], seed=self.seed)
-        self.eval_poisoner = primary_attacker.poisoner
+        protos = [build_attacker(s, seed=self.seed) for s in self.cfg.strategies]
+        self._primary_strategy = self.cfg.strategies[0]
+        self.eval_poisoner = protos[0].poisoner
+        self.excluded_train_indices = sorted(
+            {int(i) for a in protos for i in a.poisoner.excluded_train_indices()}
+        )
         self.uses_prev_global_delta = any(
             bool(getattr(ATTACK_REGISTRY.get(s.name), "needs_prev_global_delta", False))
             for s in self.cfg.strategies
@@ -175,10 +181,18 @@ class AttackCoordinator:
         updates: List[ClientUpdate] = []
         mal_indices: List[int] = []
 
+        synced_eval = False
         for idx, (update, new_state) in enumerate(results):
             cid = int(update.client_id)
             if new_state is not None and cid in self.malicious_ids:
                 self._attacker_states[cid] = new_state
+                if (
+                    not synced_eval
+                    and self.eval_poisoner is not None
+                    and self.client_strategy_map.get(cid) == self._primary_strategy
+                ):
+                    self.eval_poisoner.load_state(new_state)
+                    synced_eval = True
             if self.is_client_active_attacker(round_idx, cid):
                 mal_indices.append(idx)
             updates.append(update)

@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as tF
 from torch.func import functional_call, vmap
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import ClientUpdate, DefenseOutput, ServerContext, split_model_state
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
@@ -213,6 +213,7 @@ class DeepSightDefense(BaseDefense):
                 param_delta=F.zero_delta_like(updates[0].param_delta, device=ctx.device),
                 buffers=None,
                 metrics={"defense/kept_clients": 0.0, "defense/clip_value": clip_value},
+                client_weights=build_client_weights(updates, kept_indices=[]),
             )
 
         benign_deltas = [updates[i].param_delta for i in benign_idx]
@@ -234,4 +235,5 @@ class DeepSightDefense(BaseDefense):
                 "defense/kept_clients": float(len(benign_idx)),
                 "defense/clip_value": clip_value,
             },
+            client_weights=build_client_weights(updates, kept_indices=benign_idx),
         )

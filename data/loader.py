@@ -128,6 +128,10 @@ class FastBatchLoader:
         self.drop_last = bool(drop_last)
         self.device = torch.device(device) if device is not None else None
         self.poisoner = poisoner
+        if self.poisoner is not None:
+            bind_fn = getattr(self.poisoner, "bind_data_source", None)
+            if callable(bind_fn):
+                bind_fn(self.view.source)
         self.mode = mode
         self.return_orig_label = bool(return_orig_label)
         self.round_idx = round_idx

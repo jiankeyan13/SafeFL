@@ -1,0 +1,17 @@
+name: backdoor_indicator
+params:
+  wm_epochs: 200
+  wm_lr: 0.005
+  wm_momentum: 0.9
+  wm_weight_decay: 0.0005
+  wm_mu: 0.0
+  wm_lr_gamma: 0.8
+  is_projection_grad: false
+  projection_norm: 0.8
+  detection_threshold: 0.95
+  replace_original_bn: true
+  norm_clip: false
+  ood_samples: 800
+  ood_batch_size: 64
+  watermark_start_round: 0
+  watermark_interval: 1

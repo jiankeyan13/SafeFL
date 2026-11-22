@@ -1,0 +1,3 @@
+name: fdcr
+params:
+  eps: 1.0e-12

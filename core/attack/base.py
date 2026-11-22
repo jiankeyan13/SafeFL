@@ -7,13 +7,38 @@ component out of the box, so subclasses only write their own training/crafting l
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+
+import torch
 
 from core.attack.poisoner import BasePoisoner, PatchValue, build_poisoner
 from core.types import ClientContext, ClientUpdate
 from core.utils.config import AttackStrategyConfig
 from core.utils.registry import ATTACK_REGISTRY
 from core.utils.trainer import train_model
+
+
+def collect_raw_batches(
+    ctx: ClientContext,
+    max_batches: Optional[int] = None,
+) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]], torch.Tensor, torch.Tensor]:
+    """Fetch local batches in physical ``[0, 1]`` pixel space plus normalization stats."""
+    spec = ctx.data.source.spec
+    c = len(spec.mean)
+    mean_t = torch.tensor(spec.mean, device=ctx.device, dtype=torch.float32).view(1, c, 1, 1)
+    std_t = torch.tensor(spec.std, device=ctx.device, dtype=torch.float32).view(1, c, 1, 1)
+
+    indices = ctx.data.indices
+    bs = max(1, int(ctx.batch_size))
+    batches: List[Tuple[torch.Tensor, torch.Tensor]] = []
+    for start in range(0, len(indices), bs):
+        if max_batches is not None and len(batches) >= max_batches:
+            break
+        raw_x, raw_y = ctx.data.source.fetch_batch(
+            indices[start : start + bs], device=ctx.device
+        )
+        batches.append((raw_x, raw_y))
+    return batches, mean_t, std_t
 
 
 class BaseAttacker:
@@ -56,7 +81,10 @@ class BaseAttacker:
             p_name = str(p_cfg.pop("name", self.default_poisoner_name))
             self.poisoner = build_poisoner(p_name, **{**base_kwargs, **p_cfg})
         else:
-            self.poisoner = build_poisoner(self.default_poisoner_name, **base_kwargs)
+            self.poisoner = self._build_default_poisoner(base_kwargs)
+
+    def _build_default_poisoner(self, base_kwargs: Dict[str, Any]) -> BasePoisoner:
+        return build_poisoner(self.default_poisoner_name, **base_kwargs)
 
     @property
     def target_label(self) -> int:
@@ -105,6 +133,20 @@ class BlendAttack(BaseAttacker):
 
     def __init__(self, alpha: float = 0.2, pattern_seed: int = 2024, **kwargs: Any) -> None:
         super().__init__(alpha=float(alpha), pattern_seed=int(pattern_seed), **kwargs)
+
+
+@ATTACK_REGISTRY.register("semantic")
+class SemanticAttack(BaseAttacker):
+    """Semantic backdoor data poisoning attack."""
+
+    default_poisoner_name = "semantic"
+
+
+@ATTACK_REGISTRY.register("edge_case")
+class EdgeCaseAttack(BaseAttacker):
+    """Edge-case OOD backdoor data poisoning attack."""
+
+    default_poisoner_name = "edge_case"
 
 
 def build_attacker(

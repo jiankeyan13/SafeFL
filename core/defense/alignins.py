@@ -7,7 +7,7 @@ from typing import Any, List, Sequence
 import torch
 import torch.nn as nn
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import ClientUpdate, DefenseOutput, ServerContext, split_model_state
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
@@ -112,4 +112,5 @@ class AlignInsDefense(BaseDefense):
                 "defense/kept_clients": float(len(benign_idx)),
                 "defense/clip_value": clip_value,
             },
+            client_weights=build_client_weights(updates, kept_indices=benign_idx),
         )

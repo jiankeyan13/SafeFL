@@ -208,6 +208,7 @@ class ClientUpdate:
     buffers: StateDict
     num_samples: int
     metrics: Dict[str, float] = field(default_factory=dict)
+    extra: Dict[str, Any] = field(default_factory=dict)
 
     def to_cpu(self) -> "ClientUpdate":
         return ClientUpdate(
@@ -216,6 +217,7 @@ class ClientUpdate:
             buffers=to_cpu_state(self.buffers) or {},
             num_samples=int(self.num_samples),
             metrics={str(k): float(v) for k, v in self.metrics.items()},
+            extra=to_cpu_tree(self.extra),
         )
 
 
@@ -299,6 +301,7 @@ class ClientContext:
         buffers: Optional[StateDict] = None,
         num_samples: Optional[int] = None,
         metrics: Optional[Mapping[str, float]] = None,
+        extra: Optional[Mapping[str, Any]] = None,
     ) -> ClientUpdate:
         """Package local results into a ``ClientUpdate`` box without redundant copies."""
         if param_delta is None and buffers is None:
@@ -314,6 +317,7 @@ class ClientContext:
             buffers=buffers,
             num_samples=len(self.data) if num_samples is None else int(num_samples),
             metrics={str(k): float(v) for k, v in (metrics or {}).items()},
+            extra=dict(extra) if extra is not None else {},
         )
 
 
@@ -339,3 +343,4 @@ class DefenseOutput:
     param_delta: StateDict
     buffers: Optional[StateDict] = None
     metrics: Dict[str, float] = field(default_factory=dict)
+    client_weights: Optional[Dict[int, float]] = None

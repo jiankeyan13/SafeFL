@@ -1,7 +1,7 @@
 """Pure stateless evaluation functions for clean accuracy (CDA) and backdoor ASR."""
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -101,4 +101,52 @@ def evaluate_backdoor(
     }
     if criterion is not None and total > 0:
         out["backdoor_loss"] = total_loss / total
+    return out
+
+
+def evaluate_defense_detection(
+    participant_malicious: Mapping[int, bool],
+    client_weights: Optional[Mapping[int, float]],
+) -> Dict[str, float]:
+    """Compute client-level defense detection metrics from ``client_weights``.
+
+    Positive class = malicious client, Negative class = benign client.
+    A client is considered accepted iff ``client_weights.get(cid, 0.0) > 0.0``.
+    Returns ``defense/tpr``, ``defense/fpr``, ``defense/mar``, ``defense/bar``,
+    and ``defense/malicious_weight_ratio`` (when defined).
+    """
+    if client_weights is None or not participant_malicious:
+        return {}
+
+    tp = fn = fp = tn = 0
+    mal_weight = 0.0
+    total_weight = 0.0
+
+    for cid, is_mal in participant_malicious.items():
+        w = max(0.0, float(client_weights.get(cid, 0.0)))
+        accepted = w > 0.0
+        total_weight += w
+        if is_mal:
+            mal_weight += w
+            if accepted:
+                fn += 1
+            else:
+                tp += 1
+        else:
+            if accepted:
+                tn += 1
+            else:
+                fp += 1
+
+    out: Dict[str, float] = {}
+    n_mal = tp + fn
+    n_ben = fp + tn
+    if n_mal > 0:
+        out["defense/tpr"] = tp / n_mal
+        out["defense/mar"] = fn / n_mal
+        if total_weight > 0.0:
+            out["defense/malicious_weight_ratio"] = mal_weight / total_weight
+    if n_ben > 0:
+        out["defense/fpr"] = fp / n_ben
+        out["defense/bar"] = tn / n_ben
     return out

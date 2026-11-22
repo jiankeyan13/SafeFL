@@ -10,7 +10,7 @@ import torch.nn as nn
 from scipy.stats import wasserstein_distance
 from sklearn.cluster import KMeans
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import ClientUpdate, DefenseOutput, ServerContext, split_model_state
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
@@ -105,13 +105,21 @@ class MARSDefense(BaseDefense):
         pairs = F.find_conv_bn_pairs(global_model)
         if n < max(2, self.n_clusters) or not pairs:
             param_delta, buffers = F.aggregate_updates(updates, device=ctx.device)
-            return DefenseOutput(param_delta=param_delta, buffers=buffers)
+            return DefenseOutput(
+                param_delta=param_delta,
+                buffers=buffers,
+                client_weights=build_client_weights(updates),
+            )
 
         g_params, g_buffers = split_model_state(global_model, trainable_only=False)
         cbe_vecs = [self._extract_cbe(u, g_params, g_buffers, pairs) for u in updates]
         if any(v.size == 0 for v in cbe_vecs):
             param_delta, buffers = F.aggregate_updates(updates, device=ctx.device)
-            return DefenseOutput(param_delta=param_delta, buffers=buffers)
+            return DefenseOutput(
+                param_delta=param_delta,
+                buffers=buffers,
+                client_weights=build_client_weights(updates),
+            )
 
         dist_mat = np.zeros((n, n), dtype=np.float64)
         for i in range(n):
@@ -146,6 +154,7 @@ class MARSDefense(BaseDefense):
             param_delta=param_delta,
             buffers=buffers,
             metrics={"defense/kept_clients": float(len(kept))},
+            client_weights=build_client_weights(updates, kept_updates=kept),
         )
 
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -225,14 +225,30 @@ def create_partition_map(
     seed: int = 42,
     enable_proxy: bool = False,
     proxy_per_class: int = 10,
+    exclude_indices: Optional[Sequence[int] | np.ndarray] = None,
 ) -> PartitionMap:
-    """Carve out optional proxy set and partition remaining samples across clients."""
+    """Carve out optional exclusions/proxy set and partition remaining samples across clients."""
     rng = np.random.default_rng(seed)
+    n_total = int(len(targets))
+    available_mask = np.ones(n_total, dtype=bool)
+    if exclude_indices is not None:
+        excl = np.asarray(list(exclude_indices), dtype=np.int64).reshape(-1)
+        if excl.size > 0:
+            if int(excl.min()) < 0 or int(excl.max()) >= n_total:
+                raise ValueError(
+                    f"exclude_indices out of range [0, {n_total}): "
+                    f"min={int(excl.min())}, max={int(excl.max())}"
+                )
+            available_mask[excl] = False
+
+    avail_idx = np.nonzero(available_mask)[0].astype(np.int32)
     if enable_proxy:
-        proxy_idx, remaining_idx = sample_proxy_indices(targets, proxy_per_class, rng)
+        rel_proxy, rel_rem = sample_proxy_indices(targets[avail_idx], proxy_per_class, rng)
+        proxy_idx = avail_idx[rel_proxy].astype(np.int32, copy=False)
+        remaining_idx = avail_idx[rel_rem].astype(np.int32, copy=False)
     else:
         proxy_idx = np.empty(0, dtype=np.int32)
-        remaining_idx = np.arange(len(targets), dtype=np.int32)
+        remaining_idx = avail_idx
 
     rel_map = partitioner.partition(targets[remaining_idx], num_clients)
     client_indices: Dict[int, np.ndarray] = {}

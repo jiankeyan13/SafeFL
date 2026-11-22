@@ -6,7 +6,7 @@ from typing import Any, List, Optional
 import torch
 import torch.nn as nn
 
-from core.defense.base import BaseDefense
+from core.defense.base import BaseDefense, build_client_weights
 from core.types import ClientUpdate, DefenseOutput, ServerContext
 from core.utils import functional as F
 from core.utils.registry import DEFENSE_REGISTRY
@@ -57,4 +57,5 @@ class MultiKrumDefense(BaseDefense):
             param_delta=param_delta,
             buffers=buffers,
             metrics={"defense/kept_clients": float(len(kept_updates))},
+            client_weights=build_client_weights(updates, kept_updates=kept_updates),
         )
