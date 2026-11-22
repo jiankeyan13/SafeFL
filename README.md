@@ -63,15 +63,22 @@ SafeFL/
 
 ### 3. 支持触发器类型（Trigger）
 
-| 名称 | 可选项 |
-| --- | --- |
-| 静态局部 | 白色像素（`Patch` / `BadNets`） |
-| 分布式 | `DBA`、`FCBA` |
-| 混合 | `Blend` |
-| 语义触发器 | `Semantic`（`cifar10_car_stripe` / `cifar10_green_car` / 自定义索引） |
-| 边缘触发器 | `Edge-case`（外部 `.pkl` / `.npy` / `.pt` / 图像目录） |
-| 动态优化 | `A3FL`、`F3BA` |
-| 自然语言文本 | 暂未实现 |
+<table>
+<thead>
+<tr><th>名称</th><th>可选项</th></tr>
+</thead>
+<tbody>
+<tr><th colspan="2" align="center" style="text-align:center;background-color:#f6f8fa;">General</th></tr>
+<tr><td>静态局部</td><td><code>patch</code></td></tr>
+<tr><td>分布式</td><td><code>dba</code>、<code>fcba</code></td></tr>
+<tr><td>混合</td><td><code>blend</code></td></tr>
+<tr><td>语义触发器</td><td><code>semantic</code></td></tr>
+<tr><td>边缘触发器</td><td><code>edge_case</code></td></tr>
+<tr><th colspan="2" align="center" style="text-align:center;background-color:#f6f8fa;">More</th></tr>
+<tr><td>动态优化</td><td><code>a3fl</code>、<code>f3ba</code>、<code>mirage</code></td></tr>
+<tr><td>自然语言文本</td><td>暂未实现</td></tr>
+</tbody>
+</table>
 
 ## 快速运行
 
