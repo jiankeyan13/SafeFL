@@ -107,6 +107,133 @@ class DirichletPartitioner(Partitioner):
         return out
 
 
+@PARTITIONER_REGISTRY.register("balanced_dirichlet")
+class BalancedDirichletPartitioner(Partitioner):
+    """Strictly sample-balanced Dirichlet(alpha) Non-IID split across clients.
+
+    Every client receives exactly ``n_samples // num_clients`` samples (or ``+1`` for
+    the first ``n_samples % num_clients`` clients when not evenly divisible), while
+    every sample is assigned to exactly one client without replacement.
+    """
+
+    def __init__(self, alpha: float = 0.5, seed: int = 42, ipf_iters: int = 200, **_: Any) -> None:
+        self.alpha = float(alpha)
+        self.seed = int(seed)
+        self.ipf_iters = int(ipf_iters)
+
+    def partition(self, targets: np.ndarray, num_clients: int) -> Dict[int, np.ndarray]:
+        labels = np.asarray(targets)
+        n_samples = int(labels.size)
+        unique_labels = np.sort(np.unique(labels))
+        num_classes = len(unique_labels)
+
+        if num_clients <= 0:
+            raise ValueError("num_clients must be positive")
+        if self.alpha <= 0:
+            raise ValueError("alpha must be positive")
+        if n_samples < num_clients:
+            raise ValueError(f"n_samples ({n_samples}) < num_clients ({num_clients})")
+
+        rng = np.random.default_rng(self.seed)
+
+        # Build shuffled per-class index pools and exact target quotas.
+        class_pools: List[np.ndarray] = []
+        class_counts = np.empty(num_classes, dtype=np.int64)
+        for c, label_val in enumerate(unique_labels):
+            idx = np.where(labels == label_val)[0].astype(np.int32)
+            rng.shuffle(idx)
+            class_pools.append(idx)
+            class_counts[c] = len(idx)
+
+        base_quota, rem_quota = divmod(n_samples, num_clients)
+        quotas = np.full(num_clients, base_quota, dtype=np.int64)
+        if rem_quota > 0:
+            extra_clients = rng.choice(num_clients, size=rem_quota, replace=False)
+            quotas[extra_clients] += 1
+
+        if num_classes == 1:
+            counts = quotas[:, None]
+        else:
+            # Draw per-client Dirichlet class preferences and balance row/column marginals
+            # via Iterative Proportional Fitting (Sinkhorn scaling) without client-order bias.
+            mat = rng.dirichlet(np.repeat(self.alpha, num_classes), size=num_clients).astype(np.float64)
+            mat = np.maximum(mat, 1e-12)
+            mat *= quotas[:, None]
+
+            target_rows = quotas.astype(np.float64)
+            target_cols = class_counts.astype(np.float64)
+            for _ in range(self.ipf_iters):
+                col_sums = mat.sum(axis=0)
+                mat *= target_cols[None, :] / np.maximum(col_sums[None, :], 1e-12)
+                row_sums = mat.sum(axis=1)
+                mat *= target_rows[:, None] / np.maximum(row_sums[:, None], 1e-12)
+                if (
+                    np.max(np.abs(mat.sum(axis=0) - target_cols)) < 1e-6
+                    and np.max(np.abs(mat.sum(axis=1) - target_rows)) < 1e-6
+                ):
+                    break
+
+            counts = np.floor(mat).astype(np.int64)
+            row_def = quotas - counts.sum(axis=1)
+            col_def = class_counts - counts.sum(axis=0)
+
+            # Fix any rare overshoot caused by floating-point rounding.
+            while np.any(row_def < 0):
+                i = int(np.argmin(row_def))
+                valid_cols = np.where(counts[i] > 0)[0]
+                c = int(valid_cols[np.argmin(mat[i, valid_cols] - counts[i, valid_cols])])
+                counts[i, c] -= 1
+                row_def[i] += 1
+                col_def[c] += 1
+            while np.any(col_def < 0):
+                c = int(np.argmin(col_def))
+                valid_rows = np.where(counts[:, c] > 0)[0]
+                i = int(valid_rows[np.argmin(mat[valid_rows, c] - counts[valid_rows, c])])
+                counts[i, c] -= 1
+                row_def[i] += 1
+                col_def[c] += 1
+
+            # Distribute remaining units by largest fractional part, then fallback to largest weight.
+            frac = mat - counts
+            order = np.argsort(frac.ravel())[::-1]
+            for flat_idx in order:
+                if row_def.sum() == 0:
+                    break
+                i, c = divmod(int(flat_idx), num_classes)
+                if row_def[i] > 0 and col_def[c] > 0:
+                    counts[i, c] += 1
+                    row_def[i] -= 1
+                    col_def[c] -= 1
+
+            if row_def.sum() > 0:
+                rem_rows = np.where(row_def > 0)[0]
+                for i in rem_rows:
+                    while row_def[i] > 0:
+                        avail_cols = np.where(col_def > 0)[0]
+                        c = int(avail_cols[np.argmax(mat[i, avail_cols])])
+                        take = int(min(row_def[i], col_def[c]))
+                        counts[i, c] += take
+                        row_def[i] -= take
+                        col_def[c] -= take
+
+        # Slice per-class pools according to the exact integer count matrix.
+        cursors = np.zeros(num_classes, dtype=np.int64)
+        out: Dict[int, np.ndarray] = {}
+        for cid in range(num_clients):
+            parts: List[np.ndarray] = []
+            for c in range(num_classes):
+                cnt = int(counts[cid, c])
+                if cnt > 0:
+                    start = int(cursors[c])
+                    end = start + cnt
+                    parts.append(class_pools[c][start:end])
+                    cursors[c] = end
+            arr = np.concatenate(parts) if parts else np.empty(0, dtype=np.int32)
+            rng.shuffle(arr)
+            out[cid] = np.ascontiguousarray(arr, dtype=np.int32)
+        return out
+
+
 @PARTITIONER_REGISTRY.register("q_non_iid")
 class QNonIIDPartitioner(Partitioner):
     """q-based Non-IID split (Fang et al., 2020; Cao et al., 2021)."""

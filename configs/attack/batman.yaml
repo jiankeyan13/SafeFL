@@ -5,4 +5,5 @@ malicious_epochs: 3
 strategies:
   - name: batman
     fraction: 1.0
-    params: {}
+    params:
+      num_selected_layers: 9

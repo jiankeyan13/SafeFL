@@ -87,10 +87,13 @@ SafeFL/
 python main.py
 
 # 本地单进程模式（支持 IDE 直接打断点单步调试）
-python main.py parallel.backend=local training.rounds=5 defense=fltrust data.enable_proxy=true attack=badnets logging=local
+python main.py experiment=quick_debug defense=fltrust attack=badnets
 
-# 运行预设实验或 Hydra 多实验扫描
-python main.py experiment=batman_fltrust
+# 正交组合任意攻击 × 防御（FLTrust 会自动开启 server proxy）
+python main.py attack=batman defense=fltrust
+
+# 运行论文场景 Preset 或 Hydra 多实验网格扫描
+python main.py -m experiment=paper_batman attack=badnets,batman,neurotoxin defense=fedavg,fltrust,alignins
 python main.py -m defense=fedavg,flame,alignins attack=badnets,neurotoxin,lga seed=42
 ```
 

@@ -1,0 +1,4 @@
+# @package data.partitioner
+name: balanced_dirichlet
+params:
+  alpha: 0.5

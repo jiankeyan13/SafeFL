@@ -24,6 +24,8 @@ from core.utils.trainer import train_model
 class FLTrustDefense(BaseDefense):
     """ReLU cosine trust scoring + norm normalization anchored by server proxy update."""
 
+    requires_proxy: bool = True
+
     def __init__(
         self,
         epochs: Optional[int] = None,

@@ -702,7 +702,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--partitioner",
         default="dirichlet",
-        choices=["iid", "dirichlet", "q_non_iid"],
+        choices=["iid", "dirichlet", "balanced_dirichlet", "q_non_iid"],
         help="划分策略",
     )
     parser.add_argument("--alpha", type=float, default=0.5, help="Dirichlet alpha")
@@ -732,6 +732,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     params: Dict[str, object] = {}
     if args.partitioner == "dirichlet":
         params = {"alpha": args.alpha, "max_retries": 100}
+    elif args.partitioner == "balanced_dirichlet":
+        params = {"alpha": args.alpha}
     elif args.partitioner == "q_non_iid":
         params = {"q": args.q}
 

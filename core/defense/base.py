@@ -16,6 +16,7 @@ class BaseDefense(ABC):
     """Base class for all server-side defenses (1 defense = 1 file)."""
 
     client_extras: Tuple[str, ...] = ()
+    requires_proxy: bool = False
 
     def __init__(self, **_: Any) -> None:
         pass

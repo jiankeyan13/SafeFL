@@ -1,0 +1,27 @@
+# @package _global_
+# Batman (CVPR 2026) CIFAR-10 x ResNet-18 training protocol preset.
+# Combine orthogonally with any attack=... / defense=..., e.g.:
+#   python main.py -m experiment=paper_batman attack=badnets,batman,neurotoxin defense=fedavg,fltrust,alignins
+defaults:
+  - override /dataset: cifar10
+  - override /model: resnet18
+  - override /partitioner: q_non_iid
+
+data:
+  partitioner:
+    params:
+      q: 0.5
+
+training:
+  num_clients: 100
+  rounds: 100
+  clients_fraction: 0.1
+  lr_schedule:
+    enabled: false
+
+client:
+  lr: 0.01
+  momentum: 0.9
+  weight_decay: 0.0
+  epochs: 3
+  batch_size: 64

@@ -35,7 +35,7 @@ def parse_train_config(raw: Optional[Dict[str, Any]]) -> TrainConfig:
     return TrainConfig(
         epochs=int(raw.get("epochs", 2)),
         batch_size=int(raw.get("batch_size", 64)),
-        lr=float(raw.get("lr", 0.1)),
+        lr=float(raw.get("lr", 0.03)),
         optimizer=str(raw.get("optimizer") or raw.get("optimizer_name") or "SGD"),
         momentum=float(raw.get("momentum", 0.9)),
         weight_decay=float(raw.get("weight_decay", 5e-4)),

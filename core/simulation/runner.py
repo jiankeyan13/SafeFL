@@ -49,12 +49,18 @@ class Runner:
             run_dir=run_dir,
         ).start()
 
-        # 1. Attack Coordinator (inactive no-op when attack.enabled=False)
+        # 1. Attack Coordinator & Defense (instantiate defense first to honor requires_proxy)
         self.coordinator = AttackCoordinator(
             self.config.attack,
             range(self.config.training.num_clients),
             seed=self.seed,
         )
+        defense = build_defense(self.config.defense, seed=self.seed)
+        if defense.requires_proxy and not self.config.data.enable_proxy:
+            self.config.data.enable_proxy = True
+            self.logger.info(
+                f"Auto-enabled `data.enable_proxy=True` as required by {type(defense).__name__}"
+            )
 
         # 2. Data Hub
         self.hub = DataHub.build(
@@ -64,9 +70,8 @@ class Runner:
             exclude_train_indices=self.coordinator.excluded_train_indices,
         )
 
-        # 3. Server + Defense
+        # 3. Server
         global_model = build_model(self.config.model, self.hub.spec)
-        defense = build_defense(self.config.defense, seed=self.seed)
         self.server = Server(
             model=global_model,
             device=self.device,
@@ -152,7 +157,7 @@ class Runner:
                     train_cfg=round_train_cfg,
                     seed=self.seed,
                     num_classes=self.hub.num_classes,
-                    input_shape=(train_spec.channels, *train_spec.image_size),
+                    input_shape=(train_spec.input_channels, *train_spec.image_size),
                     proxy_data=self.hub.proxy(),
                     run_dir=self.logger.run_dir,
                 )

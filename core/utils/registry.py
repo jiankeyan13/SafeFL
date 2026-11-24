@@ -79,6 +79,6 @@ def build_model(
     params: Dict[str, Any] = {}
     if data_spec is not None:
         params["num_classes"] = int(data_spec.dataset.num_classes)
-        params["input_channels"] = int(data_spec.dataset.train.channels)
+        params["input_channels"] = int(data_spec.dataset.input_channels)
     params.update(model_cfg.params)
     return MODEL_REGISTRY.build(model_cfg.name, **params)

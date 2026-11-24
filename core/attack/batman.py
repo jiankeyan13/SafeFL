@@ -221,7 +221,7 @@ class BatmanAttack(BaseAttacker):
         regularization: Optional[float] = None,
         lamda_reg: Optional[float] = None,
         beta_reg: Optional[float] = None,
-        num_selected_layers: int = 5,
+        num_selected_layers: int = 9,
         selected_layer_ratio: Optional[float] = None,
         layer_selection: str = "global_deviation",
         layer_selection_seed: Optional[int] = None,

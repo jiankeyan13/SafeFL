@@ -144,7 +144,7 @@ class TrainConfig:
 
     epochs: int = 2
     batch_size: int = 64
-    lr: float = 0.1
+    lr: float = 0.03
     optimizer: str = "SGD"
     momentum: float = 0.9
     weight_decay: float = 5e-4

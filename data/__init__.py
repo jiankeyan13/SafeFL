@@ -5,6 +5,7 @@ from data.hub import DataHub
 from data.loader import BatchPoisoner, DataView, FastBatchLoader, apply_batch_augment
 from data.partition import (
     PARTITIONER_REGISTRY,
+    BalancedDirichletPartitioner,
     DirichletPartitioner,
     IIDPartitioner,
     Partitioner,
@@ -24,6 +25,7 @@ from data.spec import (
 
 __all__ = [
     "AugmentSpec",
+    "BalancedDirichletPartitioner",
     "BatchPoisoner",
     "DATASET_REGISTRY",
     "DataHub",

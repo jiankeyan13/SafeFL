@@ -12,7 +12,7 @@ training:
     warmup_start_lr: 0.0
 
 client:
-  lr: 0.1
+  lr: 0.03
   momentum: 0.9
   weight_decay: 0.0001
   optimizer_name: SGD

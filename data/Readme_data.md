@@ -54,6 +54,7 @@ Worker: DataHub.from_spec(spec, device) ────────┘
 | :--- | :--- | :--- |
 | `iid` | 均匀随机划分 | `seed` |
 | `dirichlet` | 带均衡约束的 `Dirichlet(alpha)` Non-IID 划分 | `alpha=1.0`, `max_retries=100`, `seed` |
+| `balanced_dirichlet` | 严格等量（Sample-balanced）`Dirichlet(alpha)` Non-IID 划分，每客户端精确分配 `N // K` 条样本 | `alpha=0.5`, `ipf_iters=200`, `seed` |
 | `q_non_iid` | 按主类比例 `q` 划分（要求 `num_clients % num_classes == 0`） | `q=0.5`, `seed` |
 
 ## 配置项 (`DataConfig`)

@@ -1,0 +1,11 @@
+# @package _global_
+# Fast local debugging preset (compose orthogonally with any attack=... defense=...)
+defaults:
+  - override /logging: local
+
+parallel:
+  backend: local
+
+training:
+  rounds: 5
+  eval_interval: 1
